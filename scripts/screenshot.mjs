@@ -56,7 +56,7 @@ const ctx = await browser.newContext({
 // Pre-warm dev routes — first request to a Next dev route triggers compile (~5–15s).
 // Walking each route once means the screenshot pass hits warm caches.
 console.log("Pre-warming routes…");
-for (const path of ["/", "/concepts/quantum-audio-encoding/grid", "/concepts/quantum-audio-encoding", "/import", "/skills"]) {
+for (const path of ["/", "/concepts/quantum-audio-encoding/grid", "/concepts/reactivity/grid", "/concepts/quantum-audio-encoding", "/import", "/skills"]) {
   const page = await ctx.newPage();
   try {
     await page.goto(BASE + path, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -80,8 +80,11 @@ async function snap(name, path, prep) {
 // 01 — homepage / concepts index
 await snap("01-home", "/");
 
-// 02 — cross-stack lesson grid view (all four stacks visible)
+// 02 — cross-stack lesson grid view (Qiskit-primary, shows the quantum/JS bridge)
 await snap("02-lesson-grid", "/concepts/quantum-audio-encoding/grid");
+
+// 06 — Vue-primary cross-stack lesson (the "I'm building a Vue/Nuxt skill" beat)
+await snap("06-lesson-grid-vue", "/concepts/reactivity/grid");
 
 // 03 — lesson page (tabs view) showing the annotation system
 await snap("03-lesson", "/concepts/quantum-audio-encoding", async (page) => {
