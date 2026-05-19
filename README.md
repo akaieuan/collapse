@@ -9,12 +9,25 @@
 Reading a tutorial gets you to *"I understand this."*
 Writing a Claude skill gets you to *"Claude understands this too."*
 
-Collapse is the tool for the second step. Every lesson you author becomes a candidate `SKILL.md` that lives in `~/.claude/skills/`. From that moment, Claude knows the pattern — with your annotations baked into its trigger phrases — and reaches for it the next time you ask "how do I do X in [stack]".
+Collapse is the tool for the second step. Every lesson you author becomes a candidate `SKILL.md` in `~/.claude/skills/`. From that moment, Claude knows the pattern — with your annotations baked into its trigger phrases — and reaches for it the next time you ask *"how do I do X in [stack]"*.
 
-It's a personal practice. Build skills:
-- **for yourself** — tuned to your voice, your projects, the way you actually write code. Your daily Claude sessions get sharper week over week.
-- **for your team** — every `SKILL.md` is a plain markdown file with kebab-case frontmatter. Share via dotfiles, gists, or a private repo. Teammates drop them into their own `~/.claude/skills/`.
-- **for learning** — express the same pattern across stacks. Building parallel Next ↔ Vue ↔ Nuxt skills cements the translation in your head *and* in Claude's reasoning.
+## Why collapse skills across languages
+
+Most of us live in one stack day-to-day. Mine is Next.js. Yours might be Vue, or Nuxt, or you're deep in Qiskit notebooks. The moment you switch — new job, side project, a teammate's codebase, a research direction — your default tool becomes a fresh learner. You're back to *"what's the Vue equivalent of `useState`?"* hand-waving, and Claude answers with generic syntax that doesn't match your existing instincts.
+
+Cross-language skills fix that asymmetry. When you author one lesson for the same concept in multiple stacks, four things happen:
+
+**1. You learn what's actually different.** Writing the Vue version after the Next version forces you to see *where* the languages diverge — not "`useState` ≈ `ref`" but: `ref` is pull-based, mutates `.value` in place, and the wrapper itself is the dependency edge. That's a distinction you only feel by writing both side-by-side. The lesson captures it. The skill carries it forward.
+
+**2. Claude carries the translation.** The generated `SKILL.md` has a `Cross-language equivalents` section pulled from your other `<LangTab>`s. When you ask Claude *"how do I do reactive state in Nuxt"* in a Vue project, it loads the Vue skill, sees the Nuxt equivalent inline, and reaches into both at once. You skip the "Vue version, but Nuxt-flavored" round-trip and get the right answer first try.
+
+**3. The library compounds.** Every new lesson can cite the ones beneath it. Once you have `vue-ref-computed`, authoring `vue-watch-effect` is faster because the trigger phrases inherit and the recipe builds on a primitive Claude already knows. Your `~/.claude/skills/` directory becomes a *vocabulary*, not a pile of disconnected files.
+
+**4. Polyglot teams stop being islands.** A `SKILL.md` is just a plain markdown file with kebab-case frontmatter. Ship them via a shared dotfiles repo or a private gist; teammates drop them into their own `~/.claude/skills/`. A Next dev opening a Vue file in your codebase gets answers shaped like *their* mental model — with the translation key inline.
+
+**5. Switching cost approaches zero.** You're not relearning Vue from scratch when you switch — you're learning where Vue and React *diverge*. Cross-stack lessons make that divergence the explicit unit of learning, instead of relearning the whole stack each time.
+
+This is the actual leverage. The MDX authoring, the notebook import, the skill quality linter — all of that is plumbing in service of the same outcome: a personal library that closes the cost of moving between languages.
 
 ## The workflow
 
@@ -160,15 +173,6 @@ pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Skills land in `~/.claude/skills/{name}/SKILL.md` and are picked up by [Claude Code](https://claude.com/claude-code) on the next session.
-
-### Scripts
-
-| Command            | What it does                                                             |
-| ------------------ | ------------------------------------------------------------------------ |
-| `pnpm dev`         | Start the Next.js dev server                                             |
-| `pnpm test`        | Run the Vitest suite (notebook parsers, annotation extraction, etc.)     |
-| `pnpm typecheck`   | `tsc --noEmit`                                                           |
-| `pnpm screenshots` | Recapture the README screenshots from the running dev server (Playwright) |
 
 ## Stack
 
