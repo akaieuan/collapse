@@ -1,0 +1,233 @@
+---
+slug: information-density
+title: Information density for research UIs
+summary: Research-tool UIs aren't marketing pages — they need to fit a lot of signal per square inch without becoming hostile. The pattern is monospace + tabular-nums + ultra-compact line height + subtle dividers. Same shape across stacks; only the styling layer changes.
+category: Design lens
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+A research surface is **not** a landing page. The user is scanning thirty rows of measurement counts, comparing scheme variants, checking circuit depths against shot counts. The visual primitives that work for a marketing page (generous line-height, sans-serif body, large headings) actively hurt this user — they have to do more eye-saccades, and every saccade is a chance to lose place.
+
+The patterns that earn density:
+
+1. **Monospace for tabular data** — numbers align under each other; the eye stays still.
+2. **`font-variant-numeric: tabular-nums`** — even in proportional fonts, numbers get monospace-width spacing.
+3. **Compact line-height** (1.3, sometimes 1.2) — three lines fit where two used to. Stops feeling cramped at type sizes around 11–12px.
+4. **Uppercase tracking labels** — `text-[10px] uppercase tracking-[0.14em]` for section headers. Tracked-out letters read at scan-speed; lowercase headlines compete with body text.
+5. **Subtle dividers, not borders** — `border-border/60` not full opacity; rows separated by 1px hairlines, not blocks.
+6. **One type scale, used hard** — body 13px, labels 10.5px, code 12px. Three sizes max. The discipline is more important than the values.
+
+The cross-stack invariance: these are CSS decisions, not framework decisions. Every framework lets you apply them; the only thing that changes is the syntactic vehicle (Tailwind utility, scoped CSS class, design token reference). Skill it once, apply it everywhere.
+
+<LangTab lang="next">
+
+```tsx {1-3#row 5-25#header 27-50#table 52-60#caption} title="components/MeasurementTable.tsx"
+type Row = { bitstring: string; count: number; pct: number };
+type Props = { rows: Row[]; shots: number };
+
+export function MeasurementTable({ rows, shots }: Props) {
+  return (
+    <section className="overflow-hidden rounded-md border border-border bg-card">
+      <header className="flex items-baseline justify-between gap-4 border-b border-border/70 px-3 py-2 font-mono text-[10.5px] text-muted-foreground">
+        <span className="uppercase tracking-[0.14em] text-foreground/80">measurement</span>
+        <span aria-hidden className="text-muted-foreground/40">·</span>
+        <span className="tabular-nums">
+          <span className="text-foreground/85">{rows.length}</span> outcomes
+        </span>
+        <span aria-hidden className="text-muted-foreground/40">·</span>
+        <span className="tabular-nums">
+          <span className="text-foreground/85">{shots.toLocaleString()}</span> shots
+        </span>
+        <code className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/90">
+          {Math.max(...rows.map((r) => r.pct)).toFixed(1)}% max
+        </code>
+      </header>
+
+      <table className="w-full font-mono text-[12px] tabular-nums">
+        <thead>
+          <tr className="border-b border-border/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            <th className="px-3 py-1.5 text-left font-normal">bitstring</th>
+            <th className="px-3 py-1.5 text-right font-normal">count</th>
+            <th className="px-3 py-1.5 text-right font-normal">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.bitstring} className={i % 2 === 0 ? "" : "bg-muted/20"}>
+              <td className="px-3 py-1 leading-tight">{r.bitstring}</td>
+              <td className="px-3 py-1 text-right leading-tight text-foreground/90">{r.count}</td>
+              <td className="px-3 py-1 text-right leading-tight text-muted-foreground">
+                {r.pct.toFixed(2)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <footer className="border-t border-border/60 bg-muted/20 px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
+        Σ {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} · ratio {((rows.reduce((s, r) => s + r.count, 0) / shots) * 100).toFixed(1)}%
+      </footer>
+    </section>
+  );
+}
+```
+
+<Note id="row" kind="core" tip="font-mono + tabular-nums on the table itself — every digit aligns vertically without thinking" remember="font-mono + tabular-nums on the <table>. Every numeric cell inherits. No per-cell font choice needed.">
+Set monospace and tabular-nums once on the `<table>` element; every cell inherits. This eliminates the most common bug in research tables: digits that jitter horizontally because some are wide (8) and some are narrow (1). With tabular-nums, all digits occupy identical horizontal space. Numbers under each other look stacked.
+</Note>
+
+<Note id="header" kind="mnemonic" tip="The status strip — uppercase + tracked + dot-separators is the canonical research-tool header" remember="`text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground` + `·` separators. The Linear/Vercel/Moth dashboard look.">
+This compact strip pattern (small uppercase labels, dot separators, tabular numbers inline) is in every dense research tool: Linear, Vercel dashboards, Notion's databases. It packs four to six pieces of metadata into the height of a single line. The styling is consistent because the eye learns this shape fast — and once learned, every tool that uses it feels familiar.
+</Note>
+
+<Note id="table" kind="gotcha" tip="leading-tight (1.25) on every row — not the default 1.5" remember="leading-tight on tbody rows. Tailwind default leading-normal (1.5) wastes vertical space at this type size.">
+At 12px font-size, the default leading of 1.5 means 18px line-height — rows that visually float. `leading-tight` (1.25) brings it to 15px. You fit 20% more rows in the same vertical space, the table reads as dense data instead of generous prose. This is the single highest-leverage tweak for research tables.
+</Note>
+
+<Note id="caption" kind="core" tip="Subtle striping + Σ-row in the footer — the math is part of the table, not commentary" remember="Footer with Σ total in mono. Rows show data; footer summarizes. No 'total: ' label, just Σ — symbolic shorthand.">
+The footer pattern: render the sum as part of the table's visual frame, not as a separate paragraph below. The Σ symbol communicates "this is the total" without needing the word. Striping at `bg-muted/20` (instead of full opacity) keeps the rows separable without screaming. The result reads as one cohesive data block, not a table plus prose.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1-8#props 10-23#table 25-45#styles} title="components/MeasurementTable.vue"
+<script setup lang="ts">
+type Row = { bitstring: string; count: number; pct: number }
+defineProps<{ rows: Row[]; shots: number }>()
+
+import { computed } from 'vue'
+const total = computed(() => rows.reduce((s: number, r: Row) => s + r.count, 0))
+</script>
+
+<template>
+  <section class="block">
+    <header class="bar">
+      <span class="label">measurement</span>
+      <span class="sep">·</span>
+      <span class="num"><strong>{{ rows.length }}</strong> outcomes</span>
+      <span class="sep">·</span>
+      <span class="num"><strong>{{ shots.toLocaleString() }}</strong> shots</span>
+    </header>
+    <table>
+      <thead>
+        <tr>
+          <th>bitstring</th>
+          <th class="num">count</th>
+          <th class="num">%</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="(r, i) in rows" :key="r.bitstring" :class="i % 2 === 0 ? '' : 'stripe'">
+          <td>{{ r.bitstring }}</td>
+          <td class="num">{{ r.count }}</td>
+          <td class="num muted">{{ r.pct.toFixed(2) }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <footer class="bar">Σ {{ total }} · {{ ((total / shots) * 100).toFixed(1) }}%</footer>
+  </section>
+</template>
+
+<style scoped>
+.block { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }
+.bar { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.5rem 0.75rem; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-foreground); border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent); }
+.bar:last-child { border-bottom: 0; border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); background: color-mix(in oklab, var(--muted) 20%, transparent); }
+.label { text-transform: uppercase; letter-spacing: 0.14em; color: color-mix(in oklab, var(--foreground) 80%, transparent); }
+.sep { color: color-mix(in oklab, var(--muted-foreground) 40%, transparent); }
+.num { font-variant-numeric: tabular-nums; }
+.num strong { color: color-mix(in oklab, var(--foreground) 85%, transparent); font-weight: 500; }
+table { width: 100%; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+th { padding: 0.375rem 0.75rem; text-align: left; font-weight: 400; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-foreground); border-bottom: 1px solid color-mix(in oklab, var(--border) 40%, transparent); }
+th.num, td.num { text-align: right; }
+td { padding: 0.25rem 0.75rem; line-height: 1.25; }
+.stripe { background: color-mix(in oklab, var(--muted) 20%, transparent); }
+.muted { color: var(--muted-foreground); }
+</style>
+```
+
+<Note id="props" kind="cross" tip="Same Row + Props type as Next — proves the data shape is portable" remember="`type Row = { bitstring: string; count: number; pct: number }` — identical across stacks. The component contract is the same.">
+The Vue component takes the exact same input shape as the React component. This is what cross-stack means in practice: the data interface (`{ rows: Row[]; shots: number }`) is portable, and the rendering details are framework-idiomatic. A backend that produces this shape can feed either component without translation.
+</Note>
+
+<Note id="table" kind="core" tip="Same table structure — header / table / footer — just expressed in Vue's templating syntax" remember="Three sections: bar (header) / table (body) / bar (footer). Identical to Next tab. Vue template syntax just sugars the same JSX shape.">
+Same three-section layout: status bar at top, data table in the middle, summation footer at bottom. The rendering order, the visual hierarchy, and the semantic structure (`<header>`, `<table>`, `<footer>`) are byte-identical to the React version. Only the *templating* differs.
+</Note>
+
+<Note id="styles" kind="mnemonic" tip="color-mix(in oklab, var(--border) 60%, transparent) — fade tokens without ad-hoc colors" remember="color-mix(in oklab, var(--X) N%, transparent) = opacity-blended tokens. The cross-stack way to do `border-border/60`.">
+Tailwind's `/60` suffix syntax (`border-border/60`) doesn't exist outside Tailwind. The portable equivalent is `color-mix(in oklab, var(--border) 60%, transparent)` — works in any CSS context. The Vue and Nuxt versions use this consistently; the Next version uses Tailwind's syntactic sugar. Same result, different idiom.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {1-5#imports 7-26#template 28-44#styles} title="components/MeasurementTable.vue"
+<script setup lang="ts">
+type Row = { bitstring: string; count: number; pct: number }
+const props = defineProps<{ rows: Row[]; shots: number }>()
+const total = computed(() => props.rows.reduce((s, r) => s + r.count, 0))
+</script>
+
+<template>
+  <section class="block">
+    <header class="bar">
+      <span class="label">measurement</span>
+      <span class="sep">·</span>
+      <span class="num"><strong>{{ rows.length }}</strong> outcomes</span>
+      <span class="sep">·</span>
+      <span class="num"><strong>{{ shots.toLocaleString() }}</strong> shots</span>
+    </header>
+    <table>
+      <thead>
+        <tr><th>bitstring</th><th class="num">count</th><th class="num">%</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="(r, i) in rows" :key="r.bitstring" :class="i % 2 === 0 ? '' : 'stripe'">
+          <td>{{ r.bitstring }}</td>
+          <td class="num">{{ r.count }}</td>
+          <td class="num muted">{{ r.pct.toFixed(2) }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <footer class="bar">Σ {{ total }} · {{ ((total / shots) * 100).toFixed(1) }}%</footer>
+  </section>
+</template>
+
+<style scoped>
+.block { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }
+.bar { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.5rem 0.75rem; font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-foreground); border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent); }
+.bar:last-child { border-bottom: 0; border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); background: color-mix(in oklab, var(--muted) 20%, transparent); }
+.label { text-transform: uppercase; letter-spacing: 0.14em; color: color-mix(in oklab, var(--foreground) 80%, transparent); }
+.sep { color: color-mix(in oklab, var(--muted-foreground) 40%, transparent); }
+.num { font-variant-numeric: tabular-nums; text-align: right; }
+.num strong { color: color-mix(in oklab, var(--foreground) 85%, transparent); font-weight: 500; }
+table { width: 100%; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+th { padding: 0.375rem 0.75rem; text-align: left; font-weight: 400; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-foreground); border-bottom: 1px solid color-mix(in oklab, var(--border) 40%, transparent); }
+th.num { text-align: right; }
+td { padding: 0.25rem 0.75rem; line-height: 1.25; }
+.stripe { background: color-mix(in oklab, var(--muted) 20%, transparent); }
+.muted { color: var(--muted-foreground); }
+</style>
+```
+
+<Note id="imports" kind="cross" tip="No import line for computed — auto-imported by Nuxt" remember="Nuxt: just call computed(). Vue: import { computed } from 'vue'. Behavior identical.">
+The Nuxt component is byte-equivalent to the Vue tab except for the missing `import { computed } from 'vue'` line. Nuxt's auto-import handles it. The cross-framework portability story is clean: write the Vue version, drop into Nuxt project, delete the import line, done.
+</Note>
+
+<Note id="template" kind="mnemonic" tip="Same DOM structure as Next + Vue — the density pattern is in CSS, not JSX/template" remember="Density patterns (mono, tabular-nums, tight leading, uppercase tracked labels) live in CSS. JSX and template are just placeholders.">
+This is the cross-stack moral: when a pattern lives in CSS (typography, spacing, color, motion), it's fundamentally framework-agnostic. The framework only owns *where* you put the styles (Tailwind utilities vs scoped CSS vs CSS modules) and *what's around them* (JSX vs template). The visual outcome is invariant.
+</Note>
+
+<Note id="styles" kind="core" tip="Same scoped styles as Vue — `<style scoped>` works identically in Nuxt" remember="Nuxt doesn't change <style scoped> semantics — the file is a Vue SFC under Nuxt's auto-import + auto-route conventions.">
+A `.vue` file in Nuxt's components directory is still a Vue SFC. `<style scoped>` works exactly the same way. The scoping mechanism (data-attribute selectors) is identical. Nuxt adds discovery/loading conventions; it doesn't change Vue's component contract.
+</Note>
+
+</LangTab>

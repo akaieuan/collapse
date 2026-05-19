@@ -1,0 +1,119 @@
+---
+slug: qiskit-noise-modeling
+title: Noise modeling with AerSimulator
+summary: How to simulate a noisy quantum backend on your laptop — depolarizing, thermal relaxation, readout error, all composable into a `NoiseModel`. The bridge between "works on paper" and "works on hardware."
+category: Quantum primitives
+languages:
+  - qiskit
+primary: qiskit
+---
+
+## The mental shift
+
+A noiseless simulator lies. Run a Bell state on AerSimulator with no noise: you get a perfect 50/50 between `00` and `11`. Run the same circuit on real hardware: you get maybe 40% `00`, 41% `11`, 9% `01`, 10% `10`. The 19% of "wrong" outcomes is **noise** — and ignoring it means your design works in simulation and breaks on hardware.
+
+The right loop:
+
+1. Build your circuit clean.
+2. Pick a `NoiseModel` — either calibrated from real hardware (`NoiseModel.from_backend()`) or hand-built for what-if analysis.
+3. Pass it to `AerSimulator(noise_model=...)` when running.
+4. Compare the noisy distribution to the ideal. The gap is what you'd need to fix or design around.
+
+The three noise channels that matter most:
+
+- **Depolarizing error** — random gate replacement. Models gate infidelity.
+- **Thermal relaxation (T1/T2)** — qubits decohere over time. Longer circuits are exponentially worse.
+- **Readout error** — measurement misreads. The classical-side error, independent of the quantum noise.
+
+These compose. A real qubit has all three plus more. The `NoiseModel` API lets you stack them.
+
+<LangTab lang="qiskit">
+
+```python {1-5#imports 7-22#build 24-39#from-backend 41-55#composable 57-66#compare} title="noisy_simulation.py"
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+from qiskit_aer.noise import NoiseModel, depolarizing_error, thermal_relaxation_error, ReadoutError
+import numpy as np
+
+# A simple Bell state — clean reference circuit
+qc = QuantumCircuit(2)
+qc.h(0)
+qc.cx(0, 1)
+qc.measure_all()
+
+# Baseline — ideal simulator, no noise
+ideal_sim = AerSimulator()
+ideal_counts = ideal_sim.run(qc, shots=10000).result().get_counts()
+# → {'00': 5023, '11': 4977}  (perfect 50/50 within shot noise)
+
+print(f"Ideal: {ideal_counts}")
+
+# Option A — pull a calibrated noise model from a real backend
+# (requires qiskit-ibm-runtime and an IBM Quantum account)
+# from qiskit_ibm_runtime import QiskitRuntimeService
+# service = QiskitRuntimeService()
+# backend = service.backend("ibm_brisbane")
+# noise_model = NoiseModel.from_backend(backend)
+# This captures the EXACT current state of the hardware — gate errors, T1/T2, readout.
+# Re-pull periodically; calibration drifts day to day.
+
+# Option B — hand-build a noise model for what-if analysis
+noise = NoiseModel()
+
+# Add 1% depolarizing error to all single-qubit gates
+single_qubit_err = depolarizing_error(0.01, num_qubits=1)
+noise.add_all_qubit_quantum_error(single_qubit_err, ["h", "x", "y", "z", "s", "t", "rx", "ry", "rz"])
+
+# Add 2% depolarizing error to all CX gates
+two_qubit_err = depolarizing_error(0.02, num_qubits=2)
+noise.add_all_qubit_quantum_error(two_qubit_err, ["cx"])
+
+# Add thermal relaxation — T1=50µs, T2=70µs, gate time 100ns
+t1, t2, gate_time = 50_000, 70_000, 100  # nanoseconds
+relax_1q = thermal_relaxation_error(t1, t2, gate_time)
+noise.add_all_qubit_quantum_error(relax_1q, ["rx", "ry", "rz", "h"])
+
+# Readout error — 3% probability of misreading 0 as 1, 4% the other way
+readout = ReadoutError([[0.97, 0.03], [0.04, 0.96]])
+noise.add_all_qubit_readout_error(readout)
+
+# Run with the noise model
+noisy_sim = AerSimulator(noise_model=noise)
+tqc = transpile(qc, noisy_sim)
+noisy_counts = noisy_sim.run(tqc, shots=10000).result().get_counts()
+# → {'00': 4612, '01': 421, '10': 432, '11': 4535}  (Bell state with realistic noise)
+
+print(f"Noisy: {noisy_counts}")
+
+# Compare the two — the gap is the noise floor of your design
+def fidelity(counts: dict, shots: int) -> float:
+    """Probability mass on the correct Bell outcomes (00 + 11)."""
+    return (counts.get("00", 0) + counts.get("11", 0)) / shots
+
+print(f"Ideal fidelity: {fidelity(ideal_counts, 10000):.3f}")
+print(f"Noisy fidelity: {fidelity(noisy_counts, 10000):.3f}")
+# Ideal: 1.000
+# Noisy: 0.915 — 8.5% of shots went to "wrong" outcomes due to depol + T1 + readout
+```
+
+<Note id="imports" kind="core" tip="qiskit_aer.noise has the building blocks — NoiseModel, three error channels, ReadoutError" remember="`NoiseModel`, `depolarizing_error`, `thermal_relaxation_error`, `ReadoutError`. These four cover most realistic noise scenarios.">
+The noise module is a separate sub-package: `qiskit_aer.noise`. Its three main exports are the three error channels you can compose into a NoiseModel. Readout error is its own class because it acts post-measurement (classical), where the other errors act pre-measurement (quantum). Understanding this split saves you from trying to add readout error to a gate set.
+</Note>
+
+<Note id="build" kind="mnemonic" tip="ALWAYS run an ideal sim first as your reference — you need the noiseless distribution to know what 'right' looks like" remember="Run noiseless first. The ideal counts are your baseline. Without them, you can't tell signal from noise.">
+The most common mistake when adding noise: jumping straight to the noisy simulator and trying to debug why results look weird. Always run noiseless first, save those counts, then add the noise model and compare. The DIFFERENCE between the two is "what does my noise model do to this circuit" — which is what you actually want to know.
+</Note>
+
+<Note id="from-backend" kind="cross" tip="NoiseModel.from_backend(backend) captures real hardware calibration — re-pull periodically" remember="from_backend() = current hardware snapshot. Calibration drifts daily; re-pull at the start of each session.">
+For research where you want simulation to match a specific real backend, `from_backend()` is the move. It pulls the latest calibration data (gate errors, T1/T2 per qubit, coupling map, readout fidelity) and constructs an exact NoiseModel. The catch: calibration drifts — IBM hardware re-calibrates daily, sometimes more often. A NoiseModel pulled yesterday isn't the noise the hardware has today. For long-running studies, re-pull as part of your job submission ritual.
+</Note>
+
+<Note id="composable" kind="core" tip="add_all_qubit_quantum_error stacks — call it multiple times to compose channels" remember="Multiple add_all_qubit_quantum_error calls on the same gate compose. Order: depolarizing → thermal relax → readout. Each adds to the channel.">
+NoiseModel is *additive*. Each call to `add_all_qubit_quantum_error` adds another channel on top of whatever's already configured for that gate. So you can stack depolarizing + thermal relaxation on the same gate by calling the add function twice. Readout is separate — it applies post-measurement on classical bits, configured via `add_all_qubit_readout_error`.
+</Note>
+
+<Note id="compare" kind="mistake" tip="Compute a single-number fidelity metric — comparing raw counts dicts is impractical at scale" remember="Define fidelity(counts, shots) as a function. Compare numbers, not dicts. Especially when sweeping noise parameters.">
+When you're sweeping noise parameters (what if depolarizing rate were 0.005 instead of 0.01?), you'll generate hundreds of counts dicts. You can't compare them by eye. Define a single-number fidelity metric early — "probability mass on the correct outcomes" works for most circuits — and plot fidelity vs noise parameter. The visualization tells the story; the raw counts are just intermediate data.
+</Note>
+
+</LangTab>

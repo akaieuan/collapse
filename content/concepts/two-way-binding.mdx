@@ -1,0 +1,162 @@
+---
+slug: two-way-binding
+title: Two-way input binding
+summary: How v-model collapses React's value + onChange into a single attribute — and what the compiler is actually doing under the hood.
+category: Cross-stack
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+React keeps state and DOM strictly separated: you write `value=` to read state into the input, then `onChange=` to write it back. Vue's `v-model` is sugar over the same two-step — `:value` plus `@input` — but the compiler writes the second half for you. The cost is a hidden mutation; the win is you stop typing the same boilerplate per input.
+
+<LangTab lang="next">
+
+```tsx {2#use-state 7#read 8-9#write 14#derived 18-22#composite} title="ProfileForm.tsx"
+'use client';
+import { useState } from 'react';
+
+export function ProfileForm() {
+  const [name, setName] = useState('');
+  const [accept, setAccept] = useState(false);
+  const [profile, setProfile] = useState({ first: '', last: '' });
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); console.log({ name, accept, profile }); }}>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} />
+
+      <input
+        value={profile.first}
+        onChange={(e) => setProfile((p) => ({ ...p, first: e.target.value }))}
+      />
+      <input
+        value={profile.last}
+        onChange={(e) => setProfile((p) => ({ ...p, last: e.target.value }))}
+      />
+      <button>Save</button>
+    </form>
+  );
+}
+```
+
+<Note id="use-state" kind="core" tip="useState is the source of truth" remember="State lives in React, not the DOM">
+The input element is a *display* of `name`. It only changes because the next render reads the new state and writes a new `value=` attribute. Without `onChange` writing back, typing would feel broken — the input would snap back to the old state on every keystroke.
+</Note>
+
+<Note id="read" kind="core" tip="value= reads state into the input" remember="value= is a one-way pipe from state to DOM">
+React diffs `value=` against the DOM each render and forces it to match. This is what makes the input "controlled" — the DOM has no say in what gets displayed.
+</Note>
+
+<Note id="write" kind="core" tip="onChange= writes the new value back" remember="onChange = the other half of the loop">
+Without this line, the input is read-only. Every controlled input needs both halves — the read (`value=`) and the write (`onChange=`) — for the loop to close.
+</Note>
+
+<Note id="derived" kind="cross" tip="Checkbox is `checked + onChange`, not `value`" remember="Different inputs, different attribute pairs">
+Checkboxes use `checked + onChange` (read `e.target.checked`). File inputs are uncontrolled. Selects use `value + onChange` like text inputs. Vue's v-model picks the right pair for each element type automatically.
+</Note>
+
+<Note id="composite" kind="mistake" tip="Spread the previous state when updating one field" remember="setState replaces — always spread first">
+`setProfile({ first: e.target.value })` would silently drop `last`. React's setState replaces wholesale, never patches. The functional updater `(p) => ({ ...p, first })` reads the latest value safely even under batched updates.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {3-5#refs 9#v-model-text 10#v-model-checkbox 12-13#v-model-path 15#submit-modifier} title="ProfileForm.vue"
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const name = ref('')
+const accept = ref(false)
+const profile = ref({ first: '', last: '' })
+</script>
+
+<template>
+  <form @submit.prevent="console.log({ name, accept, profile })">
+    <input v-model="name" />
+    <input type="checkbox" v-model="accept" />
+
+    <input v-model="profile.first" />
+    <input v-model="profile.last" />
+
+    <button>Save</button>
+  </form>
+</template>
+```
+
+<Note id="refs" kind="core" tip="ref() is the source of truth — same role as useState" remember="ref.value reads/writes; templates auto-unwrap">
+A ref is a reactive box. You write `name.value = 'x'` from script, but inside the template it auto-unwraps to `{{ name }}`. Reactivity is structural: any read inside a template or computed becomes a tracked dependency.
+</Note>
+
+<Note id="v-model-text" kind="core" tip="v-model = :value + @input, expanded by the compiler" remember="One attribute, two-way; the compiler writes the read AND the write">
+`v-model="name"` desugars to `:value="name" @input="name = $event.target.value"`. There's no magic — the same two-way loop, just typed once. The compiler is also smart enough to use `change` for some elements where `input` would be wrong.
+</Note>
+
+<Note id="v-model-checkbox" kind="cross" tip="v-model auto-picks `checked + change` for checkboxes" remember="v-model knows which attribute to bind based on the element">
+On a checkbox v-model maps to `checked + change`. On `<select>` it picks the selected value. On `<input type="number">` it can coerce to number with `.number`. You stop tracking these per-element conventions because the compiler does it.
+</Note>
+
+<Note id="v-model-path" kind="core" tip="v-model takes any reactive path, not just top-level refs" remember="v-model on profile.first writes the field directly">
+`v-model="profile.first"` mutates `profile.first` in place. Vue's reactivity tracks the property, so dependents re-run only when `first` changes — even though `profile` is one ref. No spread, no destructure-and-rebuild.
+</Note>
+
+<Note id="submit-modifier" kind="cross" tip=".prevent modifier replaces e.preventDefault()" remember="@submit.prevent is the Vue idiom for stopping default form submit">
+Event modifiers (`.prevent`, `.stop`, `.once`, `.capture`) are baked into the template. They keep the handler focused on intent rather than event-object plumbing.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {3#auto-import 6#use-state 14-17#define-model 22#parent-vmodel} title="components/ProfileForm.vue + parent"
+<!-- components/ProfileForm.vue -->
+<script setup lang="ts">
+// no import line — ref + useState are auto-imported in Nuxt
+
+const name = useState<string>('profile-name', () => '')
+
+// To accept v-model from a parent, expose a model:
+const accept = defineModel<boolean>('accept')
+</script>
+
+<template>
+  <input v-model="name" />
+  <input type="checkbox" v-model="accept" />
+</template>
+
+<!-- parent: pages/index.vue -->
+<script setup lang="ts">
+const wantsNewsletter = ref(false)
+</script>
+
+<template>
+  <ProfileForm v-model:accept="wantsNewsletter" />
+</template>
+```
+
+<Note id="auto-import" kind="cross" tip="ref, useState, defineModel — all auto-imported" remember="No import lines for Vue/Nuxt globals">
+Nuxt auto-imports composables, Vue reactivity primitives, and macros like `defineModel`. The dependency graph becomes implicit — convenient, but you have to know the convention to read code cold.
+</Note>
+
+<Note id="use-state" kind="core" tip="Nuxt's useState shares state across SSR and client" remember="useState is for cross-component or cross-request shared state">
+Plain `ref()` is fine for component-local state. `useState(key, init)` registers state into Nuxt's payload so the same value renders on the server and hydrates on the client without prop-drilling. Use it when state needs to survive hydration or be reused by another component.
+</Note>
+
+<Note id="define-model" kind="core" tip="defineModel() lets a child component receive v-model" remember="defineModel replaces the props + emits boilerplate">
+Pre-3.4, exposing v-model on a child meant writing `props: { modelValue }`, `emits: ['update:modelValue']`, and threading both. `defineModel<T>('name')` collapses that into one line and returns a writable ref.
+</Note>
+
+<Note id="parent-vmodel" kind="core" tip="v-model:name binds the named model on a child" remember="v-model:foo for named models on components">
+The parent uses `v-model:accept` — the suffix matches the name passed to `defineModel('accept')`. Without a suffix, both sides default to `modelValue`. Multiple v-models on one component are now ergonomic.
+</Note>
+
+</LangTab>

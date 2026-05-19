@@ -1,0 +1,201 @@
+---
+slug: python-sidecar
+title: Python sidecar from Next or Nuxt
+summary: How to expose a Python library (Qiskit, quantum-audio, NumPy, anything) to a JS frontend without a separate FastAPI server. Spawn → JSON → done.
+category: Cross-stack
+languages:
+  - next
+  - nuxt
+  - qiskit
+primary: next
+---
+
+## The mental shift
+
+You don't need a FastAPI sidecar to call Python from a JS framework. Both Next.js Route Handlers and Nuxt Nitro server routes can spawn a Python subprocess, pipe JSON over stdin/stdout, and return the result — same Node `child_process.spawn` API in both. The trade-off: ~150–500ms cold-start per call (Python imports). For low-traffic personal tools, that's fine. For production, swap in a long-lived process or a real RPC layer later.
+
+<LangTab lang="qiskit">
+
+```python {1-4#shebang 6-9#read 11-13#dispatch 15-22#runner} title="runner.py"
+"""
+Read JSON from stdin, do quantum work, write JSON to stdout.
+The contract: every response is a single JSON object on the last line.
+"""
+import json, sys, traceback
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.stdout.write("\n")
+
+raw = sys.stdin.read()
+payload = json.loads(raw or "{}")
+op = payload.get("op")
+
+try:
+    if op == "encode":
+        from quantumaudio import load_scheme
+        circuit = load_scheme(payload["scheme"]).encode(payload["audio"])
+        emit({"ok": True, "qubits": circuit.num_qubits})
+    else:
+        emit({"error": "unknown_op", "op": op})
+except Exception as e:
+    emit({"error": "exec_failed", "detail": str(e), "trace": traceback.format_exc()})
+```
+
+<Note id="shebang" kind="note" tip='No shebang needed — the JS side picks the python binary' remember="JS spawns .venv/bin/python — no shebang juggling.">
+Whichever side calls this script (Next or Nuxt) will spawn `.venv/bin/python runner.py`. The script doesn't need to be executable. This makes it easy to have multiple project venvs without /usr/bin/env juggling.
+</Note>
+
+<Note id="read" kind="mistake" tip="sys.stdin.read() blocks until the parent closes stdin" remember="ALWAYS call child.stdin.end() after writing. Without it, Python hangs forever.">
+The Node side writes JSON then `child.stdin.end()`. Without `end()`, this read hangs forever — that's the most common bug. Set a kill timeout to surface it loudly.
+</Note>
+
+<Note id="dispatch" kind="core" tip="One script, many ops — keep the protocol cheap" remember="One script, switch on payload.op. Avoid one-script-per-op startup tax.">
+Adding a new op is a new branch in the if/elif. Avoid one-script-per-op (ten Python startups for ten calls). Avoid a long-lived process for a personal tool — keep the contract dumb until it has to be smart.
+</Note>
+
+<Note id="runner" kind="mistake" tip="Always emit JSON, even on error — never raw exceptions" remember="Wrap the body in try/except. Always emit JSON. Crashing = useless 500 on the JS side.">
+The Node side parses the LAST line of stdout as JSON. If you `print()` debug stuff above the final emit, that's fine — Node ignores it. If you crash without emitting, Node sees `python_invalid_json` and the user sees a useless 500.
+</Note>
+
+</LangTab>
+
+<LangTab lang="next">
+
+```ts {1-3#imports 5-9#runtime 11-14#zod 16-22#post 24-32#spawn 34-39#parse} title="app/api/encode/route.ts"
+import { NextResponse } from "next/server";
+import { spawn } from "node:child_process";
+import { z } from "zod";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const PythonBin = process.env.PY_BIN ?? ".venv/bin/python";
+const ScriptPath = "lib/python/runner.py";
+
+const RequestSchema = z.object({
+  op: z.enum(["encode", "decode"]),
+  audio: z.array(z.number()),
+});
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  const parsed = RequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+
+  return new Promise<Response>((resolve) => {
+    const child = spawn(PythonBin, [ScriptPath]);
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    setTimeout(() => child.kill("SIGKILL"), 30_000);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        return resolve(NextResponse.json({ error: `exit_${code}`, stderr }, { status: 500 }));
+      }
+      try {
+        const lastLine = stdout.trim().split("\n").pop() ?? "";
+        const data = JSON.parse(lastLine);
+        resolve(NextResponse.json(data));
+      } catch {
+        resolve(NextResponse.json({ error: "invalid_python_output", stderr, stdout }, { status: 500 }));
+      }
+    });
+    child.stdin.write(JSON.stringify(parsed.data));
+    child.stdin.end();
+  });
+}
+```
+
+<Note id="imports" kind="mistake" tip="No 'use server' — Route Handlers run on Node by default" remember="'use server' = Server Action. Route Handler (route.ts) is just Node. Don't add 'use server'.">
+`'use server'` is for Server Actions (form-style). Route Handlers (`route.ts`) are full-fat Node endpoints. You import `node:child_process` directly without any flag.
+</Note>
+
+<Note id="runtime" kind="mistake" tip="runtime: 'nodejs' — never let it default to Edge" remember="Always set runtime: 'nodejs' on routes that spawn. Edge has no child_process.">
+Without this, Next may try to bundle for the Edge runtime which doesn't have `child_process`. Force Node to make sure. `dynamic: 'force-dynamic'` prevents Next from caching POST responses.
+</Note>
+
+<Note id="zod" kind="core" tip="Validate before spawning — Python is the wrong place for input validation" remember="Validate in JS BEFORE spawning. Python startup is a tax you don't pay for bad input.">
+Catches malformed input fast (no Python startup), keeps Python scripts simple, and makes the API self-documenting. Keep schemas in the route file unless they're shared across multiple routes.
+</Note>
+
+<Note id="post" kind="gotcha" tip="Always parse the body inside try/catch or via .safeParse" remember="req.json() throws on empty body. safeParse always — never .parse() in handlers.">
+A request with no body or invalid JSON crashes `req.json()`. Use safeParse to fail with a typed 400 instead of an unhandled exception.
+</Note>
+
+<Note id="spawn" kind="core" tip="Wrap spawn in a Promise — Next handlers must return a Response" remember="spawn → Promise → resolve in 'close'. Always add a kill timeout.">
+The pattern: open spawn, accumulate stdout/stderr in `data` listeners, resolve in `close`. Add a kill timeout so a runaway Python script doesn't tie up your route forever.
+</Note>
+
+<Note id="parse" kind="mnemonic" tip="Split on newlines and parse the LAST line" remember="LAST LINE is JSON. Python can print debug above. Forgiving + debuggable.">
+This pattern accepts noisy stdout. Python can `print()` debug info during the run; only the final JSON line matters. Forgiving and easy to debug.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```ts {1-2#defineEvent 4-8#read 10-13#zod 15-25#spawn 27-29#return} title="server/api/encode.post.ts"
+import { spawn } from "node:child_process";
+import { z } from "zod";
+
+const PythonBin = process.env.PY_BIN ?? ".venv/bin/python";
+const ScriptPath = "lib/python/runner.py";
+
+const RequestSchema = z.object({
+  op: z.enum(["encode", "decode"]),
+  audio: z.array(z.number()),
+});
+
+export default defineEventHandler(async (event) => {
+  const body = await readBody(event);
+  const parsed = RequestSchema.safeParse(body);
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: "invalid_request" });
+  }
+
+  const result = await new Promise<unknown>((resolve, reject) => {
+    const child = spawn(PythonBin, [ScriptPath]);
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    setTimeout(() => child.kill("SIGKILL"), 30_000);
+    child.on("close", (code) => {
+      if (code !== 0) return reject(createError({ statusCode: 500, statusMessage: `exit_${code}`, data: { stderr } }));
+      try {
+        resolve(JSON.parse(stdout.trim().split("\n").pop() ?? ""));
+      } catch {
+        reject(createError({ statusCode: 500, statusMessage: "invalid_python_output", data: { stderr, stdout } }));
+      }
+    });
+    child.stdin.write(JSON.stringify(parsed.data));
+    child.stdin.end();
+  });
+
+  return result;
+});
+```
+
+<Note id="defineEvent" kind="core" tip="defineEventHandler is Nuxt's HTTP handler primitive" remember="server/api/{name}.{method}.ts auto-binds. No router config.">
+File location matters: `server/api/encode.post.ts` auto-binds to `POST /api/encode`. The `.post` suffix is the HTTP method filter. No router config, no decorators.
+</Note>
+
+<Note id="read" kind="cross" tip="readBody parses JSON automatically" remember="Nuxt readBody = Next req.json(), but throws 400 on malformed input automatically.">
+Compare to Next's `await req.json()` — same thing, less ceremony. If the body is malformed, readBody throws a 400 automatically.
+</Note>
+
+<Note id="zod" kind="note" tip="Same Zod schema as Next — validation is framework-agnostic" remember="Move Zod schemas to shared/ — import from both server and client.">
+You can extract the schema into `shared/schemas/encode.ts` and import from both server and client. That's the Nuxt monorepo win.
+</Note>
+
+<Note id="spawn" kind="core" tip="createError is Nuxt's typed error helper" remember="throw createError(...) — becomes real HTTP error. useFetch exposes via `error` ref.">
+`throw createError({ statusCode, statusMessage, data })` becomes a real HTTP error response with structured JSON body. The client-side `useFetch` exposes it as the `error` ref.
+</Note>
+
+<Note id="return" kind="cross" tip="Just return the parsed JSON — Nuxt serializes for you" remember="Nuxt returns body directly. No NextResponse.json wrapper.">
+No `NextResponse.json` wrapping. The return value is the response body, status 200 by default.
+</Note>
+
+</LangTab>

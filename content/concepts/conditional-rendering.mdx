@@ -1,0 +1,165 @@
+---
+slug: conditional-rendering
+title: Conditional and list rendering
+summary: JSX expressions vs Vue's directives — what each style buys you, where they share gotchas, and the list-key contract that's identical in both.
+category: Cross-stack
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+JSX has no special rendering syntax — it leans on JavaScript expressions, so conditionals are `&&` / ternary / early-return and lists are `.map()`. Vue inverts the trade: structural directives (`v-if`, `v-for`) are first-class on elements. Both end up doing the same DOM work, but the failure modes are different — and the `key` contract is shared.
+
+<LangTab lang="next">
+
+```tsx {6#early-return 9#and-falsy 11-13#ternary 15-19#list-key 22-25#fragment} title="TaskList.tsx"
+'use client';
+import { Fragment } from 'react';
+import type { Task } from './types';
+
+export function TaskList({ tasks, loading, query }: { tasks: Task[]; loading: boolean; query: string }) {
+  if (loading) return <Spinner />;
+
+  return (
+    <section>
+      {tasks.length === 0 && <Empty />}
+
+      {query.length > 0 ? (
+        <Banner>Filtering by &ldquo;{query}&rdquo;</Banner>
+      ) : null}
+
+      <ul>
+        {tasks.map((t) => (
+          <li key={t.id}>{t.title}</li>
+        ))}
+      </ul>
+
+      {tasks.map((t) => (
+        <Fragment key={t.id}>
+          <dt>{t.title}</dt>
+          <dd>{t.due}</dd>
+        </Fragment>
+      ))}
+    </section>
+  );
+}
+```
+
+<Note id="early-return" kind="core" tip="Early return is the most readable conditional in JSX" remember="Bail early — don't nest huge ternaries">
+When a whole subtree depends on one boolean, return early. It saves indentation and gives each branch a clear name. Nested ternaries `cond1 ? (cond2 ? a : b) : c` are the path to unreadable JSX.
+</Note>
+
+<Note id="and-falsy" kind="mistake" tip="&& renders 0 — guard with Boolean() or > 0" remember="0 is falsy in JS but truthy in JSX (it renders!)">
+`{tasks.length && <List/>}` will render the literal `0` when the array is empty, because `&&` returns the falsy left side and React renders numbers as text. Use `tasks.length > 0 && ...` or `Boolean(tasks.length) && ...`. The same bug bites with empty strings: `{name && <Hi/>}` renders `""` when `name === ""`.
+</Note>
+
+<Note id="ternary" kind="core" tip="Ternary when both branches are concrete; null is the explicit empty" remember="Ternary for two real branches, && for one">
+`cond ? <A/> : <B/>` reads as a switch between two concrete things. `cond ? <A/> : null` works but `cond && <A/>` is more idiomatic — except for the falsy-zero gotcha above.
+</Note>
+
+<Note id="list-key" kind="core" tip="key= stabilizes identity across renders" remember="Use a stable id, never the array index for reordered lists">
+React diffs old vs new children by `key` to decide whether to mount, unmount, or move. Using array index as the key is fine for static lists but causes wrong state to "stick" when items are inserted, removed, or reordered. Always prefer a domain-stable id (`t.id`, not `i`).
+</Note>
+
+<Note id="fragment" kind="cross" tip="Fragment with key= when a list item has multiple top-level nodes" remember="<Fragment key=> when one logical row needs siblings">
+You can't put `key=` on a bare `<>...</>`; the long form `<Fragment key={...}>` is required when each iteration produces sibling elements (like `<dt>/<dd>` pairs). Vue solves this with `<template v-for>`, no fragment needed.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {2-4#props 8-10#v-if-chain 12#v-show 15-17#v-for 20-23#template-v-for 24#v-for-in-object} title="TaskList.vue"
+<script setup lang="ts">
+defineProps<{ tasks: Task[]; loading: boolean; query: string }>()
+const counts = { open: 3, done: 7 }
+</script>
+
+<template>
+  <section>
+    <Spinner v-if="loading" />
+    <Empty v-else-if="tasks.length === 0" />
+    <Banner v-else-if="query.length > 0">Filtering by &ldquo;{{ query }}&rdquo;</Banner>
+
+    <details v-show="tasks.length > 5">…</details>
+
+    <ul>
+      <li v-for="t in tasks" :key="t.id">
+        {{ t.title }}
+      </li>
+    </ul>
+
+    <dl>
+      <template v-for="t in tasks" :key="t.id">
+        <dt>{{ t.title }}</dt>
+        <dd>{{ t.due }}</dd>
+      </template>
+    </dl>
+
+    <p v-for="(value, name) in counts" :key="name">{{ name }}: {{ value }}</p>
+  </section>
+</template>
+```
+
+<Note id="props" kind="core" tip="defineProps + types replaces React's prop destructuring" remember="defineProps<T>() is the Vue 3 prop API in setup">
+`defineProps` is a compile-time macro — you don't import it. Generic types `defineProps<{ ... }>()` give you full type-safe props with no runtime declaration. There's no return value to destructure unless you assign it: `const props = defineProps<...>()`.
+</Note>
+
+<Note id="v-if-chain" kind="core" tip="v-if / v-else-if / v-else chains express React's early-return as a sequence" remember="v-if removes the element from the DOM entirely">
+`v-if` rips the element out of the tree when the condition flips false. Cheap when toggles are rare; expensive when they're frequent (because mount/unmount runs). React's conditional in JSX is the same — render returns `null`, the element unmounts.
+</Note>
+
+<Note id="v-show" kind="cross" tip="v-show toggles display: none — keeps the element mounted" remember="v-show for frequent toggles, v-if for rare ones">
+React has no direct equivalent — you'd have to inline `style={{ display: cond ? 'block' : 'none' }}`. `v-show` is faster than `v-if` when something flips many times per second (modal open/close, hover overlays) because it skips the mount/unmount.
+</Note>
+
+<Note id="v-for" kind="core" tip=":key= is the same identity contract as React's key= prop" remember="Always provide :key with a stable id, not the loop index">
+Vue's reconciler uses `:key` exactly like React: to decide whether to reuse a DOM node or create a new one. Same gotcha — using the index when items reorder leads to state desync (a child input keeping the wrong text after a sort).
+</Note>
+
+<Note id="template-v-for" kind="cross" tip="<template v-for> wraps multiple siblings without rendering a wrapper" remember="<template> is Vue's keyed Fragment">
+When each iteration produces multiple sibling elements (like `<dt>/<dd>`), wrap them in `<template v-for>` and put the key on the template. No extra wrapper element ends up in the DOM. This is Vue's answer to React's keyed `<Fragment>`.
+</Note>
+
+<Note id="v-for-in-object" kind="cross" tip="v-for iterates objects too — `(value, key)` form" remember="v-for over an object gives (value, key, index)">
+`v-for="(value, name) in obj"` walks Object.keys-style. React requires `Object.entries(obj).map(([k, v]) => ...)` explicitly. The trade-off: Vue's form is terser, but React's is more explicit about what the iteration yields.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {3#fetch 6#guard 11-13#v-for-link} title="pages/tasks.vue"
+<script setup lang="ts">
+const { data: tasks, pending, error } = await useFetch<Task[]>('/api/tasks')
+</script>
+
+<template>
+  <Spinner v-if="pending" />
+  <Error v-else-if="error" :err="error" />
+  <Empty v-else-if="!tasks?.length" />
+  <ul v-else>
+    <li v-for="t in tasks" :key="t.id">
+      <NuxtLink :to="`/tasks/${t.id}`">{{ t.title }}</NuxtLink>
+    </li>
+  </ul>
+</template>
+```
+
+<Note id="fetch" kind="cross" tip="useFetch destructures pending + error — render them with v-if chain" remember="A useFetch result has built-in pending/error/data refs">
+Nuxt's `useFetch` returns reactive refs for `data`, `pending`, `error`, `refresh`. You don't need a separate loading-state state machine; the refs flip as the request progresses, and `v-if`/`v-else-if` chains read like a state diagram.
+</Note>
+
+<Note id="guard" kind="mistake" tip="`tasks?.length` not `tasks.length` — data starts null" remember="useFetch data is null until it resolves">
+On first render `data` is `null`. `tasks.length` would throw on the server-rendered pass. Use optional chaining or a `tasks &&` guard. Same shape as guarding `data` in TanStack Query.
+</Note>
+
+<Note id="v-for-link" kind="cross" tip="<NuxtLink> replaces React's <Link> + useRouter prefetch" remember="NuxtLink prefetches by default on hover/intersection">
+Inside a `v-for`, `<NuxtLink>` is the link primitive — it intersects-with-viewport-prefetches the route, just like Next's `<Link>` does. Pass `:to` (string or route object) instead of `href`.
+</Note>
+
+</LangTab>

@@ -1,0 +1,122 @@
+---
+slug: hitl-annotation-pattern
+title: HITL Kit — annotation pattern
+summary: How HITL Kit's primitives express the "Assist-Not-Complete" paradigm — using the Interrupt Card and AI Generation Scale as the canonical example.
+category: Toolkit patterns
+languages:
+  - next
+  - vue
+primary: next
+---
+
+## The mental shift
+
+HITL Kit is built around one claim: most enterprise AI fails because we ask "can the model finish?" instead of "did the model help, without taking over?" The components encode that as UI primitives — every interaction has an explicit human agency boundary. The two anchor primitives are the **Interrupt Card** (lets the human take back control mid-flow) and the **AI Generation Scale** (lets the human tune how much the AI is doing).
+
+Below: the same shape ported across React (the canonical HITL Kit) and Vue (what it would look like if you needed it in a Vue/Nuxt project). The point isn't to replicate HITL Kit in Vue — it's to understand the shape so the pattern travels.
+
+<LangTab lang="next">
+
+```tsx {1#use-client 4-9#props 11-20#card 22-29#scale-control} title="components/hitl-card.tsx"
+"use client";
+
+import { useState } from "react";
+
+type Props = {
+  title: string;
+  body: string;
+  onApprove: () => void;
+  onReject: (reason: string) => void;
+};
+
+export function InterruptCard({ title, body, onApprove, onReject }: Props) {
+  const [reason, setReason] = useState("");
+  return (
+    <div role="region" aria-label="Awaiting human decision" className="rounded-lg border p-4">
+      <h3 className="font-medium">{title}</h3>
+      <p className="mt-2 text-sm text-muted-foreground">{body}</p>
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Reason for rejection (optional)"
+        className="mt-3 w-full rounded border bg-background px-2 py-1 text-sm"
+      />
+      <div className="mt-3 flex gap-2">
+        <button onClick={onApprove} className="rounded bg-foreground px-3 py-1 text-sm text-background">
+          Approve
+        </button>
+        <button onClick={() => onReject(reason)} className="rounded border px-3 py-1 text-sm">
+          Reject
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+<Note id="use-client" tip="Interactive primitives are always client components">
+HITL Kit's primitives all carry `'use client'` because they exist to capture human input. A "human in the loop" with no event handlers is a contradiction.
+</Note>
+
+<Note id="props" tip="The four-prop shape: title, body, approve, reject">
+Approve takes nothing (the action is the whole signal). Reject takes a reason — agency-preservation requires the human can articulate WHY they're overriding. Don't let the AI assume "no reason" means "no objection."
+</Note>
+
+<Note id="card" tip="role + aria-label make this a discoverable region for screen readers">
+Awaiting-human-decision states are accessibility-critical. A blind user shouldn't have to scan the page to find what's blocking. HITL Kit defaults to explicit `role="region"` for every interrupt.
+</Note>
+
+<Note id="scale-control" tip="Two buttons + a textarea is the minimum. Resist adding more.">
+Adding a "maybe" or "ask AI to redo" button increases UI complexity AND makes the data harder to score later (now there are 3+ outcome categories instead of binary approve/reject + reason). HITL Kit ships variants for those needs as separate primitives.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {3-7#props 11-21#template 23-26#emits} title="InterruptCard.vue"
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const props = defineProps<{
+  title: string
+  body: string
+}>()
+
+const emit = defineEmits<{
+  approve: []
+  reject: [reason: string]
+}>()
+
+const reason = ref('')
+</script>
+
+<template>
+  <div role="region" aria-label="Awaiting human decision" class="rounded-lg border p-4">
+    <h3 class="font-medium">{{ title }}</h3>
+    <p class="mt-2 text-sm text-muted-foreground">{{ body }}</p>
+    <textarea v-model="reason" placeholder="Reason for rejection (optional)"
+      class="mt-3 w-full rounded border bg-background px-2 py-1 text-sm" />
+    <div class="mt-3 flex gap-2">
+      <button @click="emit('approve')"
+        class="rounded bg-foreground px-3 py-1 text-sm text-background">Approve</button>
+      <button @click="emit('reject', reason)"
+        class="rounded border px-3 py-1 text-sm">Reject</button>
+    </div>
+  </div>
+</template>
+```
+
+<Note id="props" tip="defineProps + defineEmits is Vue's typed contract">
+The Vue equivalent of React's `Props` type. `defineEmits` declares which events you fire and their payload types. The compiler checks both at usage sites.
+</Note>
+
+<Note id="template" tip='v-model="reason" replaces useState + onChange ceremony'>
+Compare to the React version: `useState` + setter + value/onChange pair. v-model handles all of that with one directive. This is where Vue's ergonomics shine for form-heavy UI like HITL.
+</Note>
+
+<Note id="emits" tip="emit('reject', reason) — events are the Vue way to talk to parents">
+Instead of passing callback props, Vue components fire events. The parent listens with `@reject="handleReject"`. This decouples child and parent — the child doesn't need to know who's listening or what they'll do.
+</Note>
+
+</LangTab>

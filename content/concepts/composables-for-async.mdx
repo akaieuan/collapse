@@ -1,0 +1,186 @@
+---
+slug: composables-for-async
+title: Composables for async
+summary: Building reusable async composables with cancellation, debounce, and progressive results — the kinds of patterns you reach for when wrapping a Python sidecar or any slow API.
+category: Cross-stack
+languages:
+  - vue
+  - nuxt
+  - next
+primary: vue
+---
+
+## The mental shift
+
+Plain `async function fetch...` works for one-shot calls. The moment you have user-driven inputs (typing, dragging, picking a scheme) you need: cancellation of stale runs, optional debounce, and a way to express "we have a partial result" (think encoding progress over multiple shots). Composables (Vue) and custom hooks (React) are how you package those concerns once and reuse them everywhere.
+
+<LangTab lang="vue">
+
+```ts {3-34#composable} title="useAsyncTask.ts"
+import { ref, watch, onScopeDispose, type Ref } from 'vue'
+
+type AsyncTask<T, A extends unknown[]> = (signal: AbortSignal, ...args: A) => Promise<T>
+
+export function useAsyncTask<T, A extends unknown[]>(
+  task: AsyncTask<T, A>,
+  options: { debounceMs?: number } = {},
+) {
+  const data = ref<T | null>(null)
+  const pending = ref(false)
+  const error = ref<Error | null>(null)
+  let controller: AbortController | null = null
+  let debounceId: ReturnType<typeof setTimeout> | null = null
+
+  function cancel() {
+    controller?.abort()
+    if (debounceId) clearTimeout(debounceId)
+  }
+
+  async function run(...args: A) {
+    cancel()
+    const fire = async () => {
+      controller = new AbortController()
+      pending.value = true
+      error.value = null
+      try {
+        data.value = await task(controller.signal, ...args)
+      } catch (e) {
+        if ((e as Error).name !== 'AbortError') error.value = e as Error
+      } finally {
+        pending.value = false
+      }
+    }
+    if (options.debounceMs) {
+      debounceId = setTimeout(fire, options.debounceMs)
+    } else {
+      await fire()
+    }
+  }
+
+  onScopeDispose(cancel)
+  return { data, pending, error, run, cancel }
+}
+```
+
+<Note id="composable" tip="One composable, many fetchers — task is injected">
+By taking `task` as a parameter, this becomes a generic primitive. Use it for encode, decode, transpile, anything async. The `signal` lets the caller's task short-circuit on cancel — useful for fetch (`fetch(url, { signal })`).
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {2-15#use 18-24#template} title="pages/encode.vue"
+<script setup lang="ts">
+import { useAsyncTask } from '~/composables/useAsyncTask'
+
+const scheme = ref('qpam')
+const samples = ref<number[]>([])
+
+const encode = useAsyncTask(async (signal, scheme: string, samples: number[]) => {
+  const r = await $fetch('/api/encode', {
+    method: 'POST',
+    body: { op: 'encode', scheme, audio: samples },
+    signal,
+  })
+  return r
+}, { debounceMs: 250 })
+
+watch([scheme, samples], () => encode.run(scheme.value, samples.value))
+</script>
+
+<template>
+  <div>
+    <select v-model="scheme">…</select>
+    <p v-if="encode.pending.value">Encoding…</p>
+    <pre v-else>{{ encode.data.value }}</pre>
+  </div>
+</template>
+```
+
+<Note id="use" tip="$fetch is Nuxt's built-in fetcher — accepts signal natively">
+Compare to global `fetch`: $fetch deserializes JSON automatically, throws on non-2xx, and respects Nuxt's `defineNuxtPlugin` interceptors. It's drop-in for the cancellation pattern above.
+</Note>
+
+<Note id="template" tip="With composables, refs need .value in template — Nuxt auto-unwraps single refs but NOT object methods">
+`encode.pending.value` is needed inside the template because `encode` is an object whose properties are refs. If you destructured them at the top of `<script setup>`, you could write `pending` instead of `encode.pending.value`.
+</Note>
+
+</LangTab>
+
+<LangTab lang="next">
+
+```tsx {4-39#hook 42-51#use} title="useAsyncTask.tsx"
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export function useAsyncTask<T, A extends unknown[]>(
+  task: (signal: AbortSignal, ...args: A) => Promise<T>,
+  options: { debounceMs?: number } = {},
+) {
+  const [data, setData] = useState<T | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancel = useCallback(() => {
+    controllerRef.current?.abort();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+  }, []);
+
+  const run = useCallback(
+    async (...args: A) => {
+      cancel();
+      const fire = async () => {
+        const controller = new AbortController();
+        controllerRef.current = controller;
+        setPending(true);
+        setError(null);
+        try {
+          const result = await task(controller.signal, ...args);
+          if (!controller.signal.aborted) setData(result);
+        } catch (e) {
+          if ((e as Error).name !== "AbortError") setError(e as Error);
+        } finally {
+          if (!controller.signal.aborted) setPending(false);
+        }
+      };
+      if (options.debounceMs) {
+        debounceRef.current = setTimeout(fire, options.debounceMs);
+      } else {
+        await fire();
+      }
+    },
+    [task, options.debounceMs, cancel],
+  );
+
+  useEffect(() => cancel, [cancel]);
+  return { data, pending, error, run, cancel };
+}
+
+// usage
+const { data, pending, run } = useAsyncTask(
+  async (signal, scheme: string, samples: number[]) => {
+    const r = await fetch("/api/encode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op: "encode", scheme, audio: samples }),
+      signal,
+    });
+    return r.json();
+  },
+  { debounceMs: 250 },
+);
+```
+
+<Note id="hook" tip="Same shape as Vue, more boilerplate around closures and refs">
+Notice the parallel structure to the Vue composable. The mechanics are nearly identical; React's hook rules force you to externalize state via `useRef` for things that don't trigger re-renders (the controller, the debounce timer).
+</Note>
+
+<Note id="use" tip="Pair with useEffect to fire on mount or dep changes">
+Call `run(...)` from a `useEffect` that depends on the inputs you care about. This is the React equivalent of Vue's `watch([scheme, samples], () => run(...))`.
+</Note>
+
+</LangTab>

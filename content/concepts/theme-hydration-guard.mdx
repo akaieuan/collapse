@@ -1,0 +1,166 @@
+---
+slug: theme-hydration-guard
+title: Theme hydration guard
+summary: SSR-safe theme switching without the flash-of-wrong-theme bug. Server renders neutrally; client mounts → reads localStorage → applies. The pattern is identical across Next / Nuxt / Vue — only the mount primitive changes.
+category: Cross-stack patterns
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+Every SSR app that ships a theme toggle runs into the same bug: the server renders `light` (because it has no `localStorage`), the client mounts, reads the real theme, and snaps to `dark` — producing a visible flash. The fix isn't a single trick; it's a **shape** that every framework expresses slightly differently:
+
+1. **Server renders theme-neutral** — no theme-specific values in the markup that reaches the wire.
+2. **Mount-guard ref** — a piece of client-only state (`mounted`, `isClient`, `onMounted`) that flips true after hydration.
+3. **Read storage on mount** — only after the guard flips, read the real preference and apply it.
+4. **Render-gate theme-dependent UI** — anything that visually depends on the theme renders nothing (or a skeleton) until the guard flips.
+
+What's invariant: *don't render theme-dependent values until you can prove you're on the client and have read the real preference.* What's stack-specific: the primitive name (`useEffect` vs `onMounted` vs `useState(false) → setMounted(true)`) and where the client-only check lives.
+
+<LangTab lang="next">
+
+```tsx {1#use-client 3-9#hook 11-13#mount 15-17#bail 19-26#render} title="components/ThemeToggle.tsx"
+"use client";
+
+import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
+
+export function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return <button aria-label="Theme toggle" className="h-8 w-8" />;
+  }
+
+  return (
+    <button
+      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+    >
+      {theme === "dark" ? "🌙" : "☀️"}
+    </button>
+  );
+}
+```
+
+<Note id="use-client" kind="core" tip="'use client' is mandatory — useState/useEffect can't run in a Server Component" remember="Mark theme toggles 'use client'. Server Components can't read localStorage.">
+The whole point of the pattern is to defer to client. If you forget `'use client'`, Next throws at build because useState isn't allowed in Server Components. The directive is the doorway into the client-only world where this pattern can exist.
+</Note>
+
+<Note id="hook" kind="core" tip="useTheme + useState — the two-store split is the engine of the pattern" remember="useTheme = the actual theme (may be undefined on server). mounted = 'am I past hydration?'. Two refs, two purposes.">
+`useTheme()` from next-themes returns `undefined` during SSR and the real theme after mount. `mounted` is a local flag that flips after the first render. The two together let you say "I have access to client storage AND I've passed the SSR boundary" — only then do you trust the theme value.
+</Note>
+
+<Note id="mount" kind="mistake" tip="The useEffect deps array MUST be empty — running on every render defeats the guard" remember="useEffect(() => setMounted(true), []) — empty deps. Otherwise the flag flips and unflips and you re-introduce the flash.">
+Common bug: someone adds `[theme]` to the deps array. Now every theme change re-runs the effect, the flag stays true, but you've created a subtle re-render churn. Empty deps is the right answer — the flag only needs to flip once, ever.
+</Note>
+
+<Note id="bail" kind="gotcha" tip="Render a same-shape placeholder when !mounted — never null" remember="Return a placeholder with the right dimensions when !mounted. Null = layout shift. Skeleton = clean.">
+If you return `null` while !mounted, the layout shifts when the button appears. Render an `aria-label`'d empty button with the same dimensions instead. The user sees the slot reserved on first paint; the icon fills in after hydration. No CLS, no flash.
+</Note>
+
+<Note id="render" kind="mnemonic" tip="The theme-dependent UI lives BELOW the mount gate — never above" remember="Anything that reads `theme` must be inside `if (mounted)`. Promote anything that doesn't above the gate to render on SSR.">
+Inventory your component: what depends on `theme` (icons, conditional classes, conditional aria labels)? That stuff goes below the gate. What doesn't (layout, accessible labels, button structure)? That goes above the gate so it ships in SSR markup and stays stable through hydration.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1-3#imports 5-12#state 14-18#mount 21-28#template} title="components/ThemeToggle.vue"
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useColorMode } from '@vueuse/core'
+
+const mode = useColorMode()
+const mounted = ref(false)
+const themeLabel = computed(() => mode.value === 'dark' ? '🌙' : '☀️')
+
+function toggle() {
+  mode.value = mode.value === 'dark' ? 'light' : 'dark'
+}
+
+onMounted(() => {
+  mounted.value = true
+})
+</script>
+
+<template>
+  <button v-if="!mounted" aria-label="Theme toggle" class="h-8 w-8" />
+  <button v-else @click="toggle" :aria-label="`Switch to ${mode === 'dark' ? 'light' : 'dark'} mode`">
+    {{ themeLabel }}
+  </button>
+</template>
+```
+
+<Note id="imports" kind="cross" tip="useColorMode from @vueuse/core is Vue's next-themes equivalent" remember="@vueuse/core useColorMode = next-themes useTheme. Same shape: read/write a ref.">
+VueUse's `useColorMode` does the heavy lifting that next-themes does in React land — handles `prefers-color-scheme`, localStorage persistence, class application to `<html>`. The mental model maps 1:1. The ref-vs-state difference is the only syntactic change.
+</Note>
+
+<Note id="state" kind="core" tip="ref(false) + onMounted is Vue's exact analog to useState(false) + useEffect(() => set(true), [])" remember="ref(false) + onMounted(() => mounted.value = true). Same pattern, different verbs.">
+The Vue version is arguably cleaner: `onMounted` is *named* for the hydration boundary, where React's `useEffect(() => {}, [])` requires you to know the empty-array convention. Either way, the semantics are identical — flip a flag once, after the SSR boundary.
+</Note>
+
+<Note id="mount" kind="mistake" tip="onMounted only runs in the browser — perfect for hydration guards" remember="onMounted is client-only by contract. Don't try to add SSR-side guards inside it.">
+Unlike `setup()` which runs on both server and client, `onMounted` is contractually client-only. This makes it an ideal place for "I'm definitely on the client now" logic. If you try to read `window` in `setup`, you'll crash SSR; in `onMounted`, you're safe.
+</Note>
+
+<Note id="template" kind="mnemonic" tip="v-if='!mounted' / v-else is Vue's render-gate primitive — cleaner than React's ternary" remember="v-if / v-else split = the two render paths. Skeleton above, real UI below. Same shape, different stack.">
+Template-level branching with `v-if` / `v-else` is more readable than React's ternary-or-conditional-return. Both compile down to the same thing: render path A before mount, render path B after. The pattern is invariant; the syntax sugars it.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {1-7#color-mode 9-13#mount 16-23#template} title="components/ThemeToggle.vue + nuxt.config.ts"
+<!-- nuxt.config.ts: modules: ['@nuxtjs/color-mode'] -->
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+const colorMode = useColorMode()
+const mounted = ref(false)
+
+function toggle() {
+  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
+}
+
+onMounted(() => {
+  mounted.value = true
+})
+</script>
+
+<template>
+  <ClientOnly>
+    <button v-if="!mounted" aria-label="Theme toggle" class="h-8 w-8" />
+    <button v-else @click="toggle" :aria-label="`Switch to ${colorMode.value} mode`">
+      {{ colorMode.value === 'dark' ? '🌙' : '☀️' }}
+    </button>
+    <template #fallback>
+      <button aria-label="Theme toggle" class="h-8 w-8" />
+    </template>
+  </ClientOnly>
+</template>
+```
+
+<Note id="color-mode" kind="cross" tip="@nuxtjs/color-mode is the framework-native module — no manual @vueuse install" remember="Nuxt uses @nuxtjs/color-mode (auto-imports useColorMode globally). VueUse works too but module is cleaner.">
+Nuxt's `@nuxtjs/color-mode` integrates with Nuxt's auto-import system, SSR rendering, and the html-class application. It's the more Nuxt-native choice than @vueuse/core's useColorMode, though both work. The auto-import means you don't write the import line — the composable is just available.
+</Note>
+
+<Note id="mount" kind="core" tip="Nuxt has TWO guard primitives — onMounted AND <ClientOnly>. Use both for double safety" remember="<ClientOnly> = render-tree guard (SSR sees fallback). onMounted = JS-execution guard. Belt and suspenders.">
+This is the Nuxt-specific superpower: `<ClientOnly>` makes the entire child subtree client-only at the *render* level, with a `#fallback` slot for SSR. Then `onMounted` adds a second layer that flips the flag after hydration. Two guards, zero flash, even if `@nuxtjs/color-mode` somehow leaks during SSR.
+</Note>
+
+<Note id="template" kind="mnemonic" tip="The #fallback slot is what the server actually renders — make it match the post-mount dimensions" remember="<template #fallback> = SSR markup. Match the dimensions of the real button. No CLS.">
+The `#fallback` template is what the server ships in the HTML. The browser sees it during the initial paint, then `<ClientOnly>` replaces it after hydration. If the fallback has different dimensions than the post-mount button, the user sees layout shift. Match them carefully.
+</Note>
+
+</LangTab>

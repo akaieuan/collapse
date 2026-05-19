@@ -1,0 +1,178 @@
+---
+slug: render-qiskit-circuit
+title: Render a Qiskit circuit in the browser
+summary: How to surface a circuit's shape (qubits, depth, gate composition, OPENQASM dump) in a JS frontend without shipping any quantum runtime to the client.
+category: Cross-stack
+languages:
+  - qiskit
+  - next
+  - vue
+primary: qiskit
+---
+
+## The mental shift
+
+Qiskit's visualization (`circuit.draw('mpl')`) only works in Python. To render a circuit in a browser, you serialize the relevant facts on the Python side (qubit count, depth, gate counts, optionally the QASM dump) and render them yourself with React/Vue components. Trying to pipe matplotlib images is a trap — slow, ugly, and fragile.
+
+<LangTab lang="qiskit">
+
+```python {3-13#summarize 15-20#wire-protocol 22#qasm} title="serialize.py"
+from qiskit import QuantumCircuit
+from qiskit.qasm2 import dumps
+
+def summarize(circuit: QuantumCircuit) -> dict:
+    op_counts: dict[str, int] = {}
+    for instr in circuit.data:
+        name = instr.operation.name
+        op_counts[name] = op_counts.get(name, 0) + 1
+
+    return {
+        "numQubits": circuit.num_qubits,
+        "depth": circuit.depth(),
+        "size": circuit.size(),
+        "ops": [
+            {"name": k, "count": v}
+            for k, v in sorted(op_counts.items(), key=lambda kv: -kv[1])
+        ],
+    }
+
+qasm = dumps(circuit)  # OPENQASM 2.0 text — useful for "view source" view
+```
+
+<Note id="summarize" tip="Three numbers tell the story: qubits, depth, gate count">
+**Qubits** is the resource cost. **Depth** is the longest critical path of gates (parallelism budget). **Size** is the total gate count. Together they're enough to communicate "this circuit is small/medium/big" without showing the full diagram.
+</Note>
+
+<Note id="wire-protocol" tip="ops as a sorted array, not a dict — preserves order in JSON">
+Sort by count descending so the most-frequent gates show first. Keep it as an array of `{name, count}` objects — easier to render with `.map()` than to iterate a dict that may not have ordered keys.
+</Note>
+
+<Note id="qasm" tip="OPENQASM 2.0 dump is human-readable — perfect for a 'view source' panel">
+Use `qiskit.qasm2.dumps` (not `qasm()` — that's removed in modern Qiskit). For QASM 3 use `qiskit.qasm3.dumps`. Both produce text you can drop into a `<pre>` and let users copy.
+</Note>
+
+</LangTab>
+
+<LangTab lang="next">
+
+```tsx {4-12#types 14-20#component 22-29#stat 31-40#composition} title="components/CircuitDisplay.tsx"
+"use client";
+
+import { Badge } from "@/components/ui/badge";
+
+type CircuitSummary = {
+  numQubits: number;
+  depth: number;
+  size: number;
+  ops: { name: string; count: number }[];
+};
+
+type Props = { circuit: CircuitSummary; scheme?: string };
+
+export function CircuitDisplay({ circuit, scheme }: Props) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      {scheme && <Badge variant="secondary" className="mb-3">{scheme}</Badge>}
+
+      <div className="grid grid-cols-3 gap-3">
+        <Stat label="qubits" value={circuit.numQubits} />
+        <Stat label="depth" value={circuit.depth} />
+        <Stat label="ops" value={circuit.size} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-1.5">
+        {circuit.ops.map((op) => (
+          <span key={op.name} className="rounded-md border bg-background px-2 py-0.5 text-xs">
+            <span className="font-mono">{op.name}</span>
+            <span className="ml-1 text-muted-foreground">×{op.count}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="font-mono text-2xl tabular-nums">{value}</div>
+      <div className="text-xs uppercase text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+```
+
+<Note id="types" tip="Mirror the Python summary shape exactly in TypeScript">
+The type lives in a shared `lib/types.ts` if you have a Vue companion. One source of truth for the wire protocol means the API can't drift from the UI.
+</Note>
+
+<Note id="component" tip="'use client' because we want hover/click later — but the data flow is read-only">
+The component itself doesn't fetch anything. It receives the summary as props from a parent that does the fetch. That keeps the component reusable across "live" and "static" pages.
+</Note>
+
+<Note id="stat" tip="Three big numbers + a chip list is enough — don't over-design">
+Resist the urge to render an actual circuit diagram in v1. The summary is faster to scan AND faster to render than any drawing.
+</Note>
+
+<Note id="composition" tip="Render gates as chips with name + count">
+The font-mono on the name preserves the visual identity of `cx`/`rx`/`measure`. Ordering is whatever the server sent (we sorted by count desc).
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {3-7#props 11-19#template 21-26#stat} title="CircuitDisplay.vue"
+<script setup lang="ts">
+import { Badge } from '@/components/ui/badge'
+
+const props = defineProps<{
+  circuit: {
+    numQubits: number
+    depth: number
+    size: number
+    ops: { name: string; count: number }[]
+  }
+  scheme?: string
+}>()
+</script>
+
+<template>
+  <div class="rounded-lg border bg-card p-4">
+    <Badge v-if="scheme" variant="secondary" class="mb-3">{{ scheme }}</Badge>
+
+    <div class="grid grid-cols-3 gap-3">
+      <div v-for="stat in [
+        { label: 'qubits', value: circuit.numQubits },
+        { label: 'depth', value: circuit.depth },
+        { label: 'ops', value: circuit.size },
+      ]" :key="stat.label" class="rounded-md border bg-background p-3">
+        <div class="font-mono text-2xl tabular-nums">{{ stat.value }}</div>
+        <div class="text-xs uppercase text-muted-foreground">{{ stat.label }}</div>
+      </div>
+    </div>
+
+    <div class="mt-4 flex flex-wrap gap-1.5">
+      <span v-for="op in circuit.ops" :key="op.name"
+        class="rounded-md border bg-background px-2 py-0.5 text-xs">
+        <span class="font-mono">{{ op.name }}</span>
+        <span class="ml-1 text-muted-foreground">×{{ op.count }}</span>
+      </span>
+    </div>
+  </div>
+</template>
+```
+
+<Note id="props" tip="defineProps<T>() — typed props with no runtime overhead">
+Vue 3's compiler generates the runtime prop validation from the TS type. No PropTypes-style boilerplate. Generic types work too: `defineProps<Props<MyData>>()`.
+</Note>
+
+<Note id="template" tip='v-for on an inline literal — cleaner than 3 hard-coded duplicates'>
+This is a Vue idiom React people often miss: instead of repeating markup three times, build a tiny array of `{ label, value }` and `v-for` over it. The template stays declarative.
+</Note>
+
+<Note id="stat" tip="No nested component for Stat — it's two divs">
+React habit: extract everything into components. Vue habit: extract only when you reuse it elsewhere or it gets >5 lines. `v-for` plus `<div>` is fine for this scale.
+</Note>
+
+</LangTab>

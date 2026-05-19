@@ -1,0 +1,112 @@
+---
+slug: qiskit-statevector-introspection
+title: Statevector introspection
+summary: How to peek at the full quantum state before collapse — `Statevector.from_instruction(circuit)` returns the amplitudes for every basis state. Use it for debugging, visualization, and unit tests. Skip it for anything that has to run on hardware.
+category: Quantum primitives
+languages:
+  - qiskit
+primary: qiskit
+---
+
+## The mental shift
+
+Measurement destroys information. Once you measure, you get one bitstring and the rest of the state is gone. `Statevector` lets you look at the **full** quantum state — amplitudes and phases for every basis vector — without measuring. It's the design-tool view of the qubit: complete, frozen, inspectable.
+
+The trade: only works on simulators. Real quantum hardware has no statevector you can read — that's the no-cloning theorem. So statevector introspection is for **understanding** and **debugging**, not for production. If you write code that depends on reading the statevector at runtime, it can't move to hardware.
+
+What you can do with a Statevector:
+
+- **`.probabilities()`** — the magnitude-squared of each amplitude. Same shape as a noiseless measurement histogram, but exact.
+- **`.expectation_value(observable)`** — the expected value of an observable on this state. The "actually useful number" most algorithms compute.
+- **`.measure()`** — sample from the distribution. Use it to write tests without spending shot-budget on a simulator.
+- **`plot_bloch_multivector(sv)`** — render single-qubit reductions as Bloch spheres. The visual debugger.
+- **`partial_trace(sv, [keep_qubits])`** — marginalize out qubits you don't care about. Critical for visualizing entanglement.
+
+<LangTab lang="qiskit">
+
+```python {1-3#imports 5-11#bell 13-22#inspect 24-37#observables 39-50#bloch 52-65#partial} title="statevector_debug.py"
+import numpy as np
+from qiskit import QuantumCircuit
+from qiskit.quantum_info import Statevector, SparsePauliOp, partial_trace
+
+# Build a Bell state — without measurement (measurement collapses!)
+qc = QuantumCircuit(2)
+qc.h(0)
+qc.cx(0, 1)
+# Notice: NO qc.measure_all() here. We want to inspect the state.
+
+sv = Statevector.from_instruction(qc)
+# sv is now a 4-dimensional complex vector: amplitudes for |00>, |01>, |10>, |11>
+
+print(sv.data)
+# → array([0.7071+0j, 0.+0j, 0.+0j, 0.7071+0j])
+# Equal superposition of |00> and |11> — Bell state confirmed.
+
+print(sv.probabilities_dict())
+# → {'00': 0.5, '11': 0.5}
+# Same shape a noiseless measurement would produce, but exact.
+
+# Expectation values — the actually-useful primitive for most algorithms
+zz = SparsePauliOp.from_list([("ZZ", 1.0)])
+xx = SparsePauliOp.from_list([("XX", 1.0)])
+yy = SparsePauliOp.from_list([("YY", 1.0)])
+
+print(f"<ZZ> = {sv.expectation_value(zz):.4f}")  # → 1.0   (perfectly correlated in Z)
+print(f"<XX> = {sv.expectation_value(xx):.4f}")  # → 1.0   (perfectly correlated in X too — Bell state magic)
+print(f"<YY> = {sv.expectation_value(yy):.4f}")  # → -1.0  (anti-correlated in Y)
+
+# These three numbers fully characterize the entanglement of the two qubits.
+# A separable (non-entangled) state would have <XX> * <YY> = <ZZ>²,
+# but for Bell: 1 * -1 = -1, NOT 1². The "Bell inequality violation" in one line.
+
+# Visualize via Bloch spheres (single-qubit views)
+# Note: a Bell state CANNOT be drawn as two independent Bloch vectors — entanglement
+# means each qubit is in a mixed state when viewed alone. plot_bloch shows this as
+# vectors at the origin (zero length).
+from qiskit.visualization import plot_bloch_multivector
+fig = plot_bloch_multivector(sv)
+# Save: fig.savefig("bell_bloch.png")
+# Both spheres show 0-length vectors at the origin — that's the visual signature
+# of maximal entanglement. Pure product states would show unit-length vectors.
+
+# Partial trace — marginalize out one qubit to see the other in isolation
+sv_qubit0 = partial_trace(sv, [1])  # trace out qubit 1, keep qubit 0
+print(sv_qubit0)
+# → DensityMatrix with diagonal [0.5, 0.5] — maximally mixed.
+# Tracing out a qubit of an entangled pair gives a mixed state. This is THE
+# information-theoretic signature of entanglement.
+
+# For a separable state (qc with just qc.h(0)), the same trace would give a pure state.
+qc_separable = QuantumCircuit(2)
+qc_separable.h(0)
+sv_sep = Statevector.from_instruction(qc_separable)
+print(partial_trace(sv_sep, [1]))
+# → DensityMatrix representing |+><+|, a PURE state. Diagonal [0.5, 0.5] but off-diagonals = 0.5
+# Same probabilities; different "purity" — that's the gap simulation can show you and hardware can't.
+```
+
+<Note id="imports" kind="core" tip="Statevector + SparsePauliOp + partial_trace — the three workhorse imports for state introspection" remember="`Statevector.from_instruction(qc)` to get the state. `SparsePauliOp` to build observables. `partial_trace` to marginalize.">
+These three imports cover 95% of statevector debugging. `SparsePauliOp` is the modern (post-Qiskit-1.0) way to build observables — older code uses `Operator` or string-based Pauli construction. `partial_trace` lives in `qiskit.quantum_info` (not `qiskit.utils`) — easy to import-error if you copy from older tutorials.
+</Note>
+
+<Note id="bell" kind="mistake" tip="DO NOT measure before from_instruction — measurement collapses to a classical state" remember="Skip measure_all() when you want the statevector. Measurement zeros out the off-diagonal coherence — you lose the 'quantum' part.">
+The classic mistake: someone adds `qc.measure_all()` because every Qiskit tutorial does, then calls `Statevector.from_instruction(qc)` and gets a confusing result. After measurement, the state is a classical probability distribution, not a quantum superposition. Strip the measurement when inspecting; add it back when running.
+</Note>
+
+<Note id="inspect" kind="mnemonic" tip="probabilities_dict() is your bridge from quantum vocabulary to UI vocabulary" remember="probabilities_dict() returns the same shape as get_counts() — easy substitution into existing visualization code.">
+The probabilities dict has the same `{bitstring: float}` shape as the noisy `get_counts()` divided by shots. This means visualization code that renders measurement results can render exact statevector probabilities just by swapping `counts / shots` for `sv.probabilities_dict()`. Same chart code, exact data instead of sampled.
+</Note>
+
+<Note id="observables" kind="core" tip="expectation_value(observable) is the algorithm-relevant number — single float per observable" remember="VQE, QAOA, quantum machine learning all compute expectation values. Statevector.expectation_value(op) returns them exactly; hardware approximates via repeated sampling.">
+Most useful quantum algorithms (variational eigensolvers, optimizers, kernel methods) compute *expectation values* of observables, not probability distributions. On a simulator, `sv.expectation_value(op)` returns the exact value. On hardware, you'd sample shots and average — slower and noisy. Comparing the two tells you how many shots you need to match the exact answer within a target tolerance.
+</Note>
+
+<Note id="bloch" kind="gotcha" tip="Bloch spheres are SINGLE-qubit visualizations — entangled states render as origin-length vectors" remember="A Bell state on a Bloch multivector shows ZERO-LENGTH vectors — that's entanglement's visual signature, not a bug.">
+First time seeing a Bell state on Bloch spheres, people often think the rendering is broken — two empty spheres with no vectors. It's not broken. Entanglement means individual qubits don't have well-defined Bloch vectors; they're in mixed states. Zero-length is the signal. For a non-entangled state, you'd see unit-length vectors pointing somewhere on each sphere.
+</Note>
+
+<Note id="partial" kind="core" tip="partial_trace is the operation that converts a pure entangled state into a mixed marginal" remember="`partial_trace(sv, [tracedOut])` keeps qubits NOT in the list. Off-diagonal density matrix elements = coherence; diagonal = probabilities.">
+`partial_trace` is the math behind "what does one qubit of an entangled pair look like." The result is a `DensityMatrix`, not a `Statevector` — because the marginal state isn't pure, it's mixed. Designers visualizing entangled systems need this primitive: to render a single qubit's state correctly when its partner is hidden, you compute the partial trace first.
+</Note>
+
+</LangTab>

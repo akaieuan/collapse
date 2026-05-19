@@ -1,0 +1,193 @@
+---
+slug: slot-composition
+title: Slot composition — children, named slots, compound components
+summary: How a wrapper component accepts content from its caller. React uses `children` props and compound components; Vue/Nuxt use `<slot>` with default + named variants. Same goal, two genuinely different mental models — and this is the one most cross-framework refactors fumble.
+category: Cross-stack patterns
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+A `Card` component shouldn't dictate what goes inside it. The caller passes content; the card paints a frame around it. Every UI framework has its own answer for "how does a caller hand content to a wrapper," and they differ enough that this is the most likely place a cross-framework refactor introduces bugs.
+
+The two mental models:
+
+- **React: content is a function argument.** Children come in as the `children` prop (or named props). Compound components (`Card.Header`, `Card.Body`) are a convention for named slots. Type-checked at the call site; flexible; verbose.
+- **Vue/Nuxt: content is a tagged region in the template.** `<slot />` is the default; `<slot name="header" />` is named. The caller uses `<template #header>` to fill named slots. Less type-checked; less verbose; harder to refactor across boundaries.
+
+The cross-framework skill: recognize that **"props for content" and "slots for content" are not interchangeable.** A React component with a `header` prop and a Vue component with a `<slot name="header" />` look similar but compose differently:
+
+- React passes content **before render** (the parent computes the JSX, passes it down). The child renders the JSX it received.
+- Vue passes content **during render** (the child *invokes* the slot from its template). The slot can be conditional, repeated, or wrapped.
+
+This matters when you want behavior like "render this slot's content twice with different props" — trivial in Vue (scoped slots), awkward in React (render-prop pattern or a callback child).
+
+<LangTab lang="next">
+
+```tsx {1-3#types 5-19#card 21-32#consumer 34-44#scoped} title="components/Card.tsx + usage"
+import type { ReactNode } from "react";
+
+type CardProps = {
+  children: ReactNode;
+  header?: ReactNode;
+  footer?: ReactNode;
+  /** scoped-slot equivalent: pass a render-prop instead of static content */
+  renderActions?: (api: { close: () => void }) => ReactNode;
+};
+
+export function Card({ children, header, footer, renderActions }: CardProps) {
+  function close() { /* … */ }
+  return (
+    <article className="card">
+      {header && <header className="card-header">{header}</header>}
+      <div className="card-body">{children}</div>
+      {renderActions && <div className="card-actions">{renderActions({ close })}</div>}
+      {footer && <footer className="card-footer">{footer}</footer>}
+    </article>
+  );
+}
+
+// Consumer — named slots via props
+<Card
+  header={<h2>Bell state measurement</h2>}
+  footer={<small className="text-muted">4096 shots</small>}
+  renderActions={({ close }) => (
+    <>
+      <button onClick={close}>Dismiss</button>
+      <button>Re-run</button>
+    </>
+  )}
+>
+  <ProbabilityChart counts={counts} shots={4096} />
+</Card>
+
+// Compound component alternative — Card.Header, Card.Body, Card.Footer
+function CardHeader({ children }: { children: ReactNode }) { return <header className="card-header">{children}</header>; }
+function CardBody({ children }: { children: ReactNode }) { return <div className="card-body">{children}</div>; }
+function CardFooter({ children }: { children: ReactNode }) { return <footer className="card-footer">{children}</footer>; }
+
+Card.Header = CardHeader;
+Card.Body = CardBody;
+Card.Footer = CardFooter;
+```
+
+<Note id="types" kind="core" tip="children: ReactNode + named-content props — the React way to model slots" remember="children = default slot. Named props (header, footer) = named slots. renderActions = scoped slot.">
+React doesn't have a slot primitive. The conventions are: `children` for the default content, separate props (typed `ReactNode`) for named regions, and a function-as-prop (`renderX`) for scoped slots that need parent-injected data. Once you internalize this mapping, Vue components translate cleanly.
+</Note>
+
+<Note id="card" kind="core" tip="Conditional render via `&&` — the React equivalent of v-if on a <slot>" remember="`{header && <header>{header}</header>}` — only render the wrapper when content is provided. Otherwise empty slot creates empty wrapper.">
+A naive `<header>{header}</header>` would render an empty `<header>` element when no `header` prop is passed. The `{header && ...}` guard ensures the wrapper only exists if content fills it. Vue's slot system handles this automatically when the slot is unused; React requires the explicit guard.
+</Note>
+
+<Note id="consumer" kind="mnemonic" tip="JSX as prop value — the caller computes the content, the child renders it" remember="header={<h2>...</h2>} — the JSX is evaluated at the call site, passed as data. Child has no idea it was JSX.">
+The mental model: in React, content travels as data. The parent constructs the JSX (which is just `createElement(...)` calls), passes the result down as a prop, and the child renders whatever object it received. This is *upfront composition* — different from Vue's *at-render composition*.
+</Note>
+
+<Note id="scoped" kind="mistake" tip="Compound components vs slot props — pick ONE convention per component" remember="Card.Header + header prop = confusion. Pick: compound components OR named-content props. Not both.">
+The two conventions (compound components like `Card.Header` vs named props like `header={...}`) are both valid, but mixing them in one component creates an API where the caller has to remember which fields go where. Pick one. Compound components feel more like Vue slots; named props are more declarative. For design-system primitives, named props are usually cleaner.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1-3#template 5-14#consumer 17-32#scoped} title="components/Card.vue + usage"
+<!-- Card.vue — the wrapper -->
+<template>
+  <article class="card">
+    <header v-if="$slots.header" class="card-header"><slot name="header" /></header>
+    <div class="card-body"><slot /></div>
+    <div v-if="$slots.actions" class="card-actions">
+      <slot name="actions" :close="close" />
+    </div>
+    <footer v-if="$slots.footer" class="card-footer"><slot name="footer" /></footer>
+  </article>
+</template>
+
+<script setup lang="ts">
+function close() { /* … */ }
+</script>
+
+<!-- Consumer — named slots via <template #slotname> -->
+<template>
+  <Card>
+    <template #header><h2>Bell state measurement</h2></template>
+    <ProbabilityChart :counts="counts" :shots="4096" />
+    <template #actions="{ close }">
+      <button @click="close">Dismiss</button>
+      <button>Re-run</button>
+    </template>
+    <template #footer><small class="muted">4096 shots</small></template>
+  </Card>
+</template>
+```
+
+<Note id="template" kind="core" tip="<slot> is a template hole. <slot name='x'> is a named hole. v-if='$slots.x' guards empty rendering" remember="<slot /> = default. <slot name='X' /> = named. $slots.X = does the consumer provide content for slot X.">
+Vue's slot model is "template region marked for replacement." Without v-if guards, `<header><slot name="header" /></header>` renders an empty `<header>` element even when the consumer doesn't provide content — same gotcha as React. The `v-if="$slots.header"` check parallels React's `{header && ...}` guard.
+</Note>
+
+<Note id="consumer" kind="cross" tip="<template #slotname> is the consumer side — fills a named slot from the parent" remember="<template #header>...</template> = 'this content goes in the slot called header'. # is shorthand for v-slot:.">
+The `#` syntax is shorthand for `v-slot:header`. It's where Vue's slot system shows its template-language heritage — the consumer writes template-language to designate placement. Compare to React, where the consumer writes JavaScript (object construction) to do the same job. Both work; the conceptual gap is real.
+</Note>
+
+<Note id="scoped" kind="core" tip="Scoped slots — :close='close' on the slot, destructure in the consumer" remember="Wrapper: <slot :close='close' />. Consumer: <template #actions='{ close }'>. The wrapper provides context; the consumer destructures it.">
+This is where Vue slots feel more powerful than React's prop-as-content: the wrapper can pass data INTO the slot. The consumer destructures it. In React, the equivalent is a render-prop (`renderActions={({ close }) => ...}`) — same expressive power, more boilerplate. If your component family has lots of "slot needs context from wrapper" cases, Vue is materially nicer.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {1-12#card 14-32#consumer-page} title="components/Card.vue + pages/measurement.vue"
+<!-- Card.vue — auto-imported as <Card /> -->
+<template>
+  <article class="card">
+    <header v-if="$slots.header" class="card-header"><slot name="header" /></header>
+    <div class="card-body"><slot /></div>
+    <div v-if="$slots.actions" class="card-actions">
+      <slot name="actions" :close="handleClose" />
+    </div>
+    <footer v-if="$slots.footer" class="card-footer"><slot name="footer" /></footer>
+  </article>
+</template>
+
+<script setup lang="ts">
+const emit = defineEmits<{ close: [] }>()
+function handleClose() { emit('close') }
+</script>
+
+<!-- pages/measurement.vue -->
+<script setup lang="ts">
+const { data: result } = await useFetch<{ counts: Record<string, number>; shots: number }>('/api/measurement')
+</script>
+
+<template>
+  <Card @close="$router.back()">
+    <template #header>
+      <h2>Bell state measurement</h2>
+    </template>
+    <ProbabilityChart v-if="result" :counts="result.counts" :shots="result.shots" />
+    <template #actions="{ close }">
+      <button @click="close">Dismiss</button>
+      <button @click="refresh">Re-run</button>
+    </template>
+    <template #footer>
+      <small class="muted">{{ result?.shots }} shots</small>
+    </template>
+  </Card>
+</template>
+```
+
+<Note id="card" kind="mnemonic" tip="defineEmits + scoped slot — the wrapper bubbles events AND provides context, simultaneously" remember="Wrapper exposes scoped slot data (close fn) AND emits 'close' event. Consumer can use either — slot for inline action, listener for outer reaction.">
+A common pattern in Nuxt component libraries (vue-equipment does this consistently): the wrapper both **emits events** (for the parent to react to) and **provides scoped-slot data** (for the inline content to invoke). The two work together: a button inside the `actions` slot can call `close()`, which is just a function that emits the event. The parent `@close` listener catches it.
+</Note>
+
+<Note id="consumer-page" kind="cross" tip="Same slot pattern as plain Vue + auto-imports remove import noise" remember="Page imports nothing — Card, useFetch, ProbabilityChart all auto-imported. Slot/template syntax identical.">
+The page consumes the Card with zero import lines. Nuxt auto-imports the component, the composable, the chart, the page directive — everything. The composition logic (template syntax, slot semantics, scoped slot destructuring) is identical to plain Vue. This is the Nuxt win: ergonomic surface, identical semantics.
+</Note>
+
+</LangTab>

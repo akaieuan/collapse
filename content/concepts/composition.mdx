@@ -1,0 +1,163 @@
+---
+slug: composition
+title: Composition primitives
+summary: How each ecosystem extracts and reuses logic — custom hooks, composables, auto-imports, and circuit composition.
+category: Foundations
+languages:
+  - next
+  - vue
+  - nuxt
+  - qiskit
+primary: vue
+---
+
+## What "composition" means here
+
+Each framework has its own answer to "I have a piece of stateful logic — how do I package it for reuse?" The mechanics differ but the goal is the same: name a behavior, hide its plumbing, expose the right surface.
+
+<LangTab lang="next">
+
+```tsx {1#hook-prefix 3-13#use-counter 16-19#use-counter-call} title="useCounter.tsx"
+import { useState, useCallback } from 'react';
+
+export function useCounter(initial = 0) {
+  const [count, setCount] = useState(initial);
+
+  const inc = useCallback(() => setCount((c) => c + 1), []);
+  const reset = useCallback(() => setCount(initial), [initial]);
+
+  return { count, inc, reset };
+}
+
+// Use it in any component:
+
+export function Counter() {
+  const { count, inc } = useCounter(0);
+  return <button onClick={inc}>{count}</button>;
+}
+```
+
+<Note id="hook-prefix" tip="The 'use' prefix is enforced by lint, not the runtime">
+React's rules-of-hooks lint relies on the `use` prefix to know what's a hook. Without it the linter can't verify that `useState` is being called in valid hook order.
+</Note>
+
+<Note id="use-counter" tip="A hook is just a function that calls other hooks">
+There's no special registration. The shape of the return value (object vs tuple) is your choice — convention says tuples for very generic primitives, objects for named values.
+</Note>
+
+<Note id="use-counter-call" tip="Hooks must be called at the top level of components">
+You can't call `useCounter` inside an `if` or a loop. The order of hook calls is the only thing React uses to associate state across renders.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1#composable-name 3-15#use-counter 19-22#use-counter-call} title="useCounter.ts + Counter.vue"
+// useCounter.ts
+import { ref } from 'vue'
+
+export function useCounter(initial = 0) {
+  const count = ref(initial)
+
+  function inc() {
+    count.value++
+  }
+  function reset() {
+    count.value = initial
+  }
+
+  return { count, inc, reset }
+}
+
+// Counter.vue
+<script setup lang="ts">
+import { useCounter } from '@/composables/useCounter'
+const { count, inc } = useCounter(0)
+</script>
+
+<template>
+  <button @click="inc">{{ count }}</button>
+</template>
+```
+
+<Note id="composable-name" tip="Composables are 'use' prefixed by convention only">
+Vue has no rules-of-hooks. Composables can be called anywhere reactivity is set up (inside `setup()` or `<script setup>`). The `use` prefix is purely for readability.
+</Note>
+
+<Note id="use-counter" tip="Plain functions returning refs and methods">
+No hook ordering, no dependency arrays, no memoization. Reactivity flows out of the returned refs naturally. This is the cleanest equivalent to a custom hook in any framework.
+</Note>
+
+<Note id="use-counter-call" tip="Returned refs auto-unwrap in templates">
+Even though `count` is a ref, you write `{{ count }}` in the template. Inside the script you'd write `count.value++`.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {1-13#composables-folder 15-17#auto-import-call} title="composables/useCounter.ts"
+// composables/useCounter.ts
+// No import needed — auto-imported because of the folder name
+
+export const useCounter = (initial = 0) => {
+  const count = ref(initial)
+
+  const inc = () => count.value++
+  const reset = () => (count.value = initial)
+
+  return { count, inc, reset }
+}
+
+// pages/index.vue
+<script setup lang="ts">
+const { count, inc } = useCounter(0)
+</script>
+```
+
+<Note id="composables-folder" tip="Files in composables/ become global, no import line">
+Nuxt scans `composables/` and auto-imports every export. The folder name is the convention. You also get auto-imports for `ref`, `computed`, `useState`, `useFetch`, etc.
+</Note>
+
+<Note id="auto-import-call" tip="Call composables anywhere — no import line">
+Nuxt's auto-import is double-edged: ergonomic, but it makes the dependency graph implicit. To follow what `useCounter` actually does, you have to remember the folder convention.
+</Note>
+
+</LangTab>
+
+<LangTab lang="qiskit">
+
+```python {1-7#bell-fn 9-12#combine 14-17#use} title="composition.py"
+from qiskit import QuantumCircuit
+
+def bell_pair() -> QuantumCircuit:
+    qc = QuantumCircuit(2)
+    qc.h(0)
+    qc.cx(0, 1)
+    return qc
+
+def add_measurement(qc: QuantumCircuit) -> QuantumCircuit:
+    measured = qc.copy()
+    measured.measure_all()
+    return measured
+
+main = QuantumCircuit(4, 4)
+main.compose(bell_pair(), qubits=[0, 1], inplace=True)
+main.compose(bell_pair(), qubits=[2, 3], inplace=True)
+main = add_measurement(main)
+```
+
+<Note id="bell-fn" tip="A function that returns a QuantumCircuit is a 'composable'">
+The Qiskit equivalent of a custom hook: a pure builder function. It has no side effects on global state — it returns a new circuit you can compose into a larger one.
+</Note>
+
+<Note id="combine" tip="Don't mutate the input — copy and modify">
+A bug class familiar to React devs: `qc.measure_all()` mutates in place. Returning `qc.copy()` after modification keeps the function pure and lets the caller decide.
+</Note>
+
+<Note id="use" tip="compose() embeds a smaller circuit into a larger one">
+`compose(other, qubits=[0, 1])` is the analog of "calling the composable". You wire your local qubits to its qubits the way you'd wire a custom hook's outputs to your component's state.
+</Note>
+
+</LangTab>

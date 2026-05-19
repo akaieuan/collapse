@@ -1,0 +1,230 @@
+---
+slug: reactivity
+title: Reactivity model
+summary: How frameworks track "this value depends on that value" and update only what changed.
+category: Foundations
+languages:
+  - next
+  - vue
+  - nuxt
+  - qiskit
+primary: vue
+qiskitNote: Qiskit doesn't have reactivity in the JS framework sense — quantum state evolves through gate operations applied imperatively, and you only "observe" the system at measurement time.
+---
+
+## The mental shift
+
+React re-runs the whole component function on state change, then diffs and patches the DOM. Vue tracks which DOM nodes depend on which reactive values and updates only those nodes. Nuxt inherits Vue's reactivity but adds SSR-safe primitives. Qiskit has no automatic reactivity — quantum state evolves only through explicit gate application.
+
+<LangTab lang="next">
+
+```tsx {1#use-client 5#useState 7#derived 9#return} title="Counter.tsx"
+'use client';
+
+import { useState } from 'react';
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+
+  const doubled = count * 2;
+
+  return <button onClick={() => setCount(count + 1)}>{doubled}</button>;
+}
+```
+
+<Note id="use-client" kind="mistake" tip="Mark as a client component" remember="No 'use client' = no useState. Server components have no client runtime.">
+React state hooks only run on the client. Without `'use client'` at the top of the file the component is a server component and `useState` will throw at compile time. The most common Next App Router gotcha.
+</Note>
+
+<Note id="useState" kind="core" tip="useState returns a tuple of [value, setter]" remember="Every setter call re-runs the WHOLE function. That's React's update model.">
+The whole component function re-runs every time `setCount` is called. That re-run is what produces the new JSX. `useMemo` and `useCallback` exist precisely because of this re-run model — they're escape hatches for when the re-run is too expensive.
+</Note>
+
+<Detail id="useState">
+The setter is async. This catches everyone at least once:
+
+```tsx
+const [count, setCount] = useState(0)
+
+function bug() {
+  setCount(count + 1)
+  setCount(count + 1)  // both reads see count=0; final result is 1, not 2
+}
+
+function fix() {
+  setCount((c) => c + 1)
+  setCount((c) => c + 1)  // each receives the latest value; result is 2
+}
+```
+
+The functional update form is the safe default whenever the new value depends on the old one.
+
+Object/array state is replaced wholesale, never patched:
+
+```tsx
+const [user, setUser] = useState({ name: 'A', age: 30 })
+
+setUser({ age: 31 })             // BUG: drops `name`
+setUser((u) => ({ ...u, age: 31 })) // correct
+```
+
+Heavy initial values get computed every render unless you pass a function:
+
+```tsx
+const [data, setData] = useState(parseHugeJSON())   // parses on EVERY render, throws result away
+const [data, setData] = useState(() => parseHugeJSON()) // lazy initializer, parses ONCE
+```
+
+The pattern: any `useState(expensive())` should be `useState(() => expensive())`.
+</Detail>
+
+<Note id="derived" kind="gotcha" tip="Derived values are recomputed on every render" remember="No useMemo = recomputed every render. Usually fine; sometimes ruinous.">
+`doubled` is recomputed every time the function runs. It looks free here, but for expensive derivations you reach for `useMemo(() => count * 2, [count])` to skip the recomputation. Vue's `computed` is automatic; React's is opt-in.
+</Note>
+
+<Note id="return" kind="core" tip="JSX is the output of the render function" remember="DOM is downstream of function output. Function reruns first, DOM updates second.">
+React's update model is: re-run this function, get new JSX, diff against last JSX, patch the DOM. Once you internalize this, every React performance question makes sense.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {3#ref-import 4#ref-primitive 5#computed 7-9#fn-no-callback 12#dot-value-template} title="Counter.vue"
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+
+const count = ref(0)
+const doubled = computed(() => count.value * 2)
+
+function inc() {
+  count.value++
+}
+</script>
+
+<template>
+  <button @click="inc">{{ doubled }}</button>
+</template>
+```
+
+<Note id="ref-import" kind="note" tip="ref and computed are explicit imports" remember="One primitive per import. Tree-shake the others away.">
+Unlike React hooks which are bundled into one import, Vue's reactivity primitives are individually imported. This makes tree-shaking easy and tells you at a glance which reactive APIs a component uses.
+</Note>
+
+<Note id="ref-primitive" kind="core" tip="ref() wraps a primitive in a reactive container" remember="ref makes an OBJECT whose .value is reactive. The wrapper is the trick.">
+`ref(0)` returns an object with a `.value` property. Vue tracks reads and writes of `.value`. This is the trick that lets JavaScript track mutations of primitives — there's no proxy on the number itself, the proxy is the wrapping object.
+</Note>
+
+<Note id="computed" kind="cross" tip="computed is lazy, cached, and auto-tracked" remember="Vue's computed = React's useMemo, but free and automatic.">
+No deps array. Vue figures out dependencies by recording which refs are read inside the function. Recomputes only when a tracked dep changes, and only when the result is actually accessed. The closest thing to "React's useMemo done right".
+</Note>
+
+<Note id="fn-no-callback" kind="cross" tip="Plain functions — no useCallback needed" remember="Setup runs ONCE. Function identity is stable. No useCallback needed in Vue.">
+The setup function runs once when the component mounts, so this function isn't recreated on every state change. There's no equivalent of React's "function identity changes every render" problem in Vue.
+</Note>
+
+<Note id="dot-value-template" kind="mistake" tip="Templates auto-unwrap refs — no .value" remember="Script: .value. Template: no .value. Mix them up and Vue silently shows '[object Object]'.">
+In `<script>` you write `count.value`. In `<template>` you write `count`. The template compiler unwraps refs for you. The #1 confusion for React folks coming to Vue.
+</Note>
+
+<Detail id="dot-value-template">
+The auto-unwrap is template-only, and only at the top level. The moment a ref appears inside another expression, the rules shift.
+
+Top-level ref in template — auto-unwrapped:
+
+```vue
+<template>
+  <p>{{ count }}</p>           <!-- works, prints the number -->
+  <button @click="count++">+</button>   <!-- works, increments -->
+</template>
+```
+
+Ref nested inside an object literal — NOT unwrapped:
+
+```vue
+<template>
+  <Child :data="{ value: count }" />    <!-- count is the REF here, not the number -->
+  <Child :data="{ value: count.value }" /> <!-- correct: pass the number -->
+</template>
+```
+
+Ref unwrap rule of thumb: if you see `{{ x }}` or `:foo="x"`, you're fine. If you see `{ x: y }` or `[x]` or `x.foo`, you need `.value` even in the template.
+
+In script, NEVER omit `.value`:
+
+```ts
+const count = ref(0)
+console.log(count)       // logs the ref OBJECT, not 0
+console.log(count.value) // logs 0
+if (count > 5)           // bug: comparing ref object to number
+if (count.value > 5)     // correct
+```
+
+The reactive primitive isn't the number — it's the wrapper. Internalize that one fact and the .value rule stops feeling arbitrary.
+</Detail>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {2-4#use-state-nuxt 6#computed-nuxt} title="components/Counter.vue"
+<script setup lang="ts">
+const count = useState('counter', () => 0)
+
+const doubled = computed(() => count.value * 2)
+
+function inc() {
+  count.value++
+}
+</script>
+
+<template>
+  <button @click="inc">{{ doubled }}</button>
+</template>
+```
+
+<Note id="use-state-nuxt" kind="mistake" tip="useState is auto-imported and SSR-safe" remember="Nuxt useState ≠ React useState. It's a keyed, SSR-safe Vue ref.">
+Nuxt's `useState` (not React's!) is a Vue ref keyed by a string. It serializes between server and client during hydration so the value isn't recomputed on the client. The auto-import means there's no `import { ref } from 'vue'` line — Nuxt's bundler adds it.
+</Note>
+
+<Note id="computed-nuxt" kind="gotcha" tip="computed is also auto-imported" remember="Auto-imports are convenient but kill grep. Trade ergonomics for visibility.">
+Nuxt auto-imports every Vue reactivity primitive (`ref`, `computed`, `watch`, `watchEffect`, etc.) plus its own composables (`useFetch`, `useState`, `useRoute`, etc.). The trade-off is reduced grep-ability — no import statement to follow.
+</Note>
+
+</LangTab>
+
+<LangTab lang="qiskit">
+
+```python {3-4#qubits 6-7#gates 9#measure 11-13#run} title="counter.py"
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+
+qc = QuantumCircuit(2, 2)
+qc.h(0)
+
+qc.cx(0, 1)
+qc.measure([0, 1], [0, 1])
+
+sim = AerSimulator()
+result = sim.run(transpile(qc, sim), shots=1024).result()
+counts = result.get_counts()
+print(counts)
+```
+
+<Note id="qubits" kind="core" tip="A QuantumCircuit is a static description, not a reactive value" remember="Circuit = recipe. State exists only inside the simulator at run time.">
+Unlike a Vue ref or React state, the circuit doesn't hold a "current value" you can read. It's a recipe for operations. The state lives only inside the simulator (or quantum hardware) when the circuit is executed.
+</Note>
+
+<Note id="gates" kind="gotcha" tip="Gates are applied imperatively, in order" remember="qc.h(0) MUTATES qc — no functional 'returns new circuit' API.">
+`qc.h(0)` doesn't return a new circuit — it mutates `qc` in place. Each gate appends to the circuit's instruction list. There's no dependency tracking or "what depends on this qubit" graph.
+</Note>
+
+<Note id="measure" kind="core" tip="Measurement is the only way to read state" remember="No console.log for qubits. Measure or stay in the dark.">
+You can't peek at qubit values mid-circuit the way you'd `console.log(count)`. Measurement collapses the superposition into a classical bit — and that's the only "side effect" the outside world ever sees.
+</Note>
+
+<Note id="run" kind="core" tip="Execution produces a probability distribution, not a single value" remember="Quantum 'state' = a distribution over shots. Not a single value.">
+`shots=1024` runs the circuit 1024 times. `counts` is a dict like `{'00': 512, '11': 512}` — the counter doesn't increment, it samples a quantum distribution. Compare to deterministic `count + 1` in the JS examples.
+</Note>
+
+</LangTab>

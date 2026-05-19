@@ -1,0 +1,92 @@
+---
+slug: qiskit-parameter-binding
+title: Parameters and parameter binding
+summary: How to build a single circuit with knobs you can turn at run time. `Parameter('theta')` makes a circuit symbolic; `bind_parameters()` or `assign_parameters()` resolves it to concrete values. Avoid rebuilding circuits in a loop — bind instead.
+category: Quantum primitives
+languages:
+  - qiskit
+primary: qiskit
+---
+
+## The mental shift
+
+A naive Qiskit beginner builds a fresh `QuantumCircuit` every time they want to try a different rotation angle. That works, but it's also how you end up with a 30-minute sweep that should have been 30 seconds. The fix is **parametric circuits**: build the circuit *once* with symbolic placeholders, then bind concrete values for each run. Transpile once (slow); bind many times (fast); run as a batch.
+
+The contract:
+
+- **`Parameter('theta')`** — a named placeholder for a real-valued knob.
+- **`ParameterVector('phi', n)`** — a length-`n` vector of named placeholders, for circuits with many knobs.
+- **`circuit.bind_parameters({theta: 0.5})`** — produces a new concrete circuit (immutable; the original stays parametric).
+- **`circuit.assign_parameters({theta: 0.5}, inplace=True)`** — mutates the circuit. Use when you don't need to keep the parametric original.
+- **Transpile the parametric circuit** — transpilation works on parametric circuits in Qiskit 1.0+. You pay the transpile cost once, then bind values cheaply for each shot.
+
+<LangTab lang="qiskit">
+
+```python {1-3#imports 5-15#build 17-26#sweep 28-37#vector 39-50#batch} title="parametric_sweep.py"
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.circuit import Parameter, ParameterVector
+from qiskit_aer import AerSimulator
+
+theta = Parameter("theta")
+qc = QuantumCircuit(1)
+qc.rx(theta, 0)
+qc.measure_all()
+
+print(qc.parameters)
+# → ParameterView([Parameter(theta)])
+
+print(qc.draw())
+# Shows the gate with theta as the angle, not a number.
+
+# 1) Transpile the parametric circuit ONCE — this is where the savings come from
+sim = AerSimulator()
+tqc = transpile(qc, sim, optimization_level=2)
+
+# 2) Sweep — bind to a different theta on every iteration. No rebuild, no retranspile.
+angles = np.linspace(0, 2 * np.pi, 50)
+results = []
+for angle in angles:
+    bound = tqc.assign_parameters({theta: angle})
+    counts = sim.run(bound, shots=4096).result().get_counts()
+    results.append((angle, counts.get("1", 0) / 4096))
+
+# 3) Many knobs at once — ParameterVector for compact code
+phi = ParameterVector("phi", 3)
+multi = QuantumCircuit(3)
+for i, p in enumerate(phi):
+    multi.ry(p, i)
+multi.measure_all()
+
+# Bind by passing a list or dict
+bound_multi = multi.assign_parameters({phi: [0.1, 0.5, 1.2]})
+# Or: multi.assign_parameters([0.1, 0.5, 1.2])  — positional, by parameter order
+
+# 4) Batch over many parameter sets — much faster than the explicit loop
+bound_circuits = [tqc.assign_parameters({theta: a}) for a in angles]
+job = sim.run(bound_circuits, shots=4096)
+batch_results = [c.get("1", 0) / 4096 for c in job.result().get_counts()]
+# AerSimulator parallelizes circuit execution across cores automatically.
+```
+
+<Note id="imports" kind="core" tip="Parameter lives in qiskit.circuit — not qiskit top-level" remember="`from qiskit.circuit import Parameter, ParameterVector`. Top-level qiskit doesn't re-export them as of v1.0.">
+A pre-Qiskit-1.0 import path quirk that still trips people up: `Parameter` is not at the top level. It's in `qiskit.circuit`. The old `from qiskit import Parameter` works in some versions and not others — always use the explicit path to avoid the v0.x → v1.x migration friction.
+</Note>
+
+<Note id="build" kind="core" tip="The parametric circuit holds a reference to the Parameter — calling .draw() shows the symbol" remember="qc.parameters returns a ParameterView. qc.draw() renders 'θ' or the param name. Useful for verifying you didn't accidentally bind too early.">
+Parametric circuits are *symbolic*. `qc.parameters` returns all unbound parameters; `qc.draw()` displays them as symbols in the diagram. If you draw your circuit and see actual numbers where you expected `theta`, you accidentally bound somewhere (usually because you typed `qc.rx(0.5, 0)` instead of `qc.rx(theta, 0)`).
+</Note>
+
+<Note id="sweep" kind="mistake" tip="Transpile the PARAMETRIC circuit, then bind — never bind first" remember="transpile(parametric) → assign_parameters per iteration. Inverting the order recompiles for every angle.">
+The mistake that motivates the whole pattern: a beginner writes a loop that rebuilds + transpiles inside the loop. Transpilation is slow (it includes optimization passes); binding is essentially free. Transpile once outside the loop, bind inside. On a 50-point sweep with optimization_level=2, this is a 100× speedup.
+</Note>
+
+<Note id="vector" kind="mnemonic" tip="ParameterVector is one symbol with indices — cleaner than 10 individual Parameters" remember="ParameterVector('phi', 10) → phi[0], phi[1], ... phi[9]. Iterate it; bind it as a list.">
+When you have many knobs (e.g., a 10-qubit ansatz with one Ry per qubit), declaring 10 individual `Parameter("phi_0")`, `Parameter("phi_1")`, ... is verbose. `ParameterVector("phi", 10)` produces an indexable container of 10 named parameters. Binding accepts a list (positional) or dict (named).
+</Note>
+
+<Note id="batch" kind="gotcha" tip="sim.run accepts a LIST of circuits — runs them in parallel under the hood" remember="sim.run([circ1, circ2, ...]) — one job, parallel execution. Faster than calling run() in a loop.">
+A common missed optimization: people call `sim.run(circuit)` inside their sweep loop, getting sequential execution. AerSimulator's `run` accepts a list and parallelizes across cores. For a 100-circuit sweep on an 8-core machine, this is roughly an 8× speedup on top of the transpile-once savings. Combine them and a sweep that took minutes takes seconds.
+</Note>
+
+</LangTab>

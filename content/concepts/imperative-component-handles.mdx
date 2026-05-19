@@ -1,0 +1,178 @@
+---
+slug: imperative-component-handles
+title: Imperative component handles
+summary: Reaching inside a child component to call a method — React's forwardRef + useImperativeHandle vs Vue's defineExpose. When to use them, and when to refuse.
+category: Cross-stack
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+Most parent → child communication is declarative: pass props down, receive events up. Every once in a while you need the parent to *do* something inside the child — `play()` a video, `focus()` an input, `flush()` a buffered queue. React makes this expensive on purpose (forwardRef + useImperativeHandle); Vue makes it cheap (`defineExpose`). The friction in React is a feature: it's nudging you toward declarative state.
+
+<LangTab lang="next">
+
+```tsx {3#use-client 5#forward-ref 6-7#inner-ref 9-13#imperative-handle 18-19#parent-ref 22#parent-call 25#focus-ref} title="VideoPlayer.tsx + Stage.tsx"
+'use client';
+import { forwardRef, useImperativeHandle, useRef } from 'react';
+
+export type PlayerHandle = { play: () => void; pause: () => void };
+
+export const VideoPlayer = forwardRef<PlayerHandle, { src: string }>(function VideoPlayer({ src }, ref) {
+  const video = useRef<HTMLVideoElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    play: () => { void video.current?.play(); },
+    pause: () => { video.current?.pause(); },
+  }), []);
+
+  return <video ref={video} src={src} />;
+});
+
+// Parent
+export function Stage() {
+  const player = useRef<PlayerHandle>(null);
+  return (
+    <>
+      <VideoPlayer ref={player} src="/clip.mp4" />
+      <button onClick={() => player.current?.play()}>Play</button>
+
+      {/* Most of the time you want the DOM ref directly: */}
+      <FocusableInput />
+    </>
+  );
+}
+```
+
+<Note id="use-client" kind="gotcha" tip="forwardRef only works in client components" remember="Imperative handles imply interactivity — needs 'use client'">
+useRef and useImperativeHandle are client-only. If you forget the `'use client'` directive Next will fail at compile time with a confusing message about hooks in server components. The same restriction applies to any DOM ref pattern.
+</Note>
+
+<Note id="forward-ref" kind="core" tip="forwardRef threads the parent's ref through the child" remember="forwardRef is plumbing — it carries the ref to where you assign it">
+A child component can't accept `ref` as a normal prop — React intercepts it. `forwardRef<HandleType, PropsType>((props, ref) => ...)` exposes the second argument so you can attach it to a DOM node *or* an imperative handle. From React 19 onwards, ref-as-prop drops this wrapper, but most codebases still ship 18.
+</Note>
+
+<Note id="inner-ref" kind="core" tip="Internal ref to the actual DOM node" remember="Two refs — parent's handle ref + your local DOM ref">
+The pattern needs two refs: one private (`video`) holding the real DOM node, and one public (the forwarded `ref`) holding the curated handle. The handle's methods call into the private ref. Skipping the private ref and forwarding the DOM ref directly leaks the entire HTMLVideoElement API to the parent.
+</Note>
+
+<Note id="imperative-handle" kind="core" tip="useImperativeHandle whitelists what the parent can call" remember="Curate the API the parent sees — don't leak the whole DOM node">
+The function returns an object — the parent only gets these methods, not the full HTMLVideoElement. The deps array is usually `[]` because the methods close over refs (which are stable), not over state. If your handle methods depend on state, list those deps so the handle re-creates when they change.
+</Note>
+
+<Note id="parent-ref" kind="core" tip="Parent uses useRef typed to the handle" remember="useRef<PlayerHandle>(null) — same type that forwardRef declares">
+The ref's type matches whatever `forwardRef<HandleType, ...>` declared. Mismatch and you'll get cryptic "Property 'play' does not exist on type 'never'" errors. Export the handle type so callers can import it.
+</Note>
+
+<Note id="parent-call" kind="mistake" tip="Always optional-chain — current is null until mount" remember="player.current is null on first render">
+On the first render, before the child mounts, `player.current === null`. Calling `.play()` directly will throw. The `?.` operator covers it. The same applies to any DOM ref before its element is in the tree.
+</Note>
+
+<Note id="focus-ref" kind="cross" tip="If you only need a DOM method, skip the handle wrapper" remember="forwardRef → DOM ref directly when no curation is needed">
+For things like focus, you don't need useImperativeHandle at all — just `forwardRef` the ref straight to the DOM node and the parent calls `inputRef.current?.focus()`. Reach for useImperativeHandle only when you want a *narrower* API than the DOM gives you.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {3#template-ref 5-7#expose 13-15#parent-ref 17#parent-call 22#focus-pattern} title="VideoPlayer.vue + Stage.vue"
+<!-- VideoPlayer.vue -->
+<script setup lang="ts">
+const video = useTemplateRef<HTMLVideoElement>('video')
+
+function play() { void video.value?.play() }
+function pause() { video.value?.pause() }
+defineExpose({ play, pause })
+</script>
+
+<template>
+  <video ref="video" :src="src" />
+</template>
+
+<!-- Stage.vue -->
+<script setup lang="ts">
+import VideoPlayer from './VideoPlayer.vue'
+const player = useTemplateRef<InstanceType<typeof VideoPlayer>>('player')
+</script>
+
+<template>
+  <VideoPlayer ref="player" src="/clip.mp4" />
+  <button @click="player?.play()">Play</button>
+
+  <input ref="emailInput" />
+  <button @click="emailInput?.focus()">Focus email</button>
+</template>
+```
+
+<Note id="template-ref" kind="core" tip="useTemplateRef (Vue 3.5+) replaces ref('name') for typed template refs" remember="useTemplateRef('video') reads the ref attribute of the same name">
+The string passed to `useTemplateRef` matches the `ref="video"` attribute in the template. The returned ref is typed and reactive, and is `null` until mount — same lifecycle as React's `useRef`. Pre-3.5 you'd write `const video = ref<HTMLVideoElement>()` — still works but loses the name-binding.
+</Note>
+
+<Note id="expose" kind="core" tip="defineExpose() is the whole API — no forwardRef wrapper" remember="defineExpose makes methods callable from a parent's template ref">
+By default, a child component instance exposes nothing — the parent gets `null` if it tries to read methods. `defineExpose({ play, pause })` whitelists what's visible. This is the closest equivalent to React's useImperativeHandle, but flatter: no wrapping function, no forwarding plumbing.
+</Note>
+
+<Note id="parent-ref" kind="core" tip="Parent gets a component instance, not a handle object" remember="InstanceType<typeof Component> is the parent ref's type">
+The parent's ref is to the *component instance*, which has the exposed methods directly on it. TypeScript needs `InstanceType<typeof VideoPlayer>` to know what's there — there's no separate handle type to import.
+</Note>
+
+<Note id="parent-call" kind="mistake" tip="Optional-chain — ref is null until mounted" remember="Same null-on-first-render rule as React">
+`player.value` is `null` on the first render. Always optional-chain. Inside a template, just `player?.play()` works because Vue won't throw on null in expressions, but it's clearer to be explicit.
+</Note>
+
+<Note id="focus-pattern" kind="cross" tip="For DOM methods (focus, scrollIntoView), skip defineExpose entirely" remember="Bare ref= on a DOM element gives you the element directly">
+A `ref=` on a DOM element gives you the raw element via `useTemplateRef` — no defineExpose needed. defineExpose is only relevant when the parent is interacting with a *child component*, not a child DOM node.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {1#auto-imports 4#client-only 9#defineExpose-auto 13-14#await-mount} title="components/VideoPlayer.vue"
+<script setup lang="ts">
+// useTemplateRef and defineExpose are auto-imported in Nuxt
+
+const video = useTemplateRef<HTMLVideoElement>('video')
+
+function play() { void video.value?.play() }
+function pause() { video.value?.pause() }
+
+defineExpose({ play, pause })
+
+// Wait for the next tick if you want to call play() right after a mount:
+import { nextTick } from '#imports'
+async function autoPlay() {
+  await nextTick()
+  video.value?.play()
+}
+</script>
+
+<template>
+  <ClientOnly>
+    <video ref="video" :src="src" />
+  </ClientOnly>
+</template>
+```
+
+<Note id="auto-imports" kind="cross" tip="No import line for useTemplateRef or defineExpose" remember="Macros and reactivity primitives auto-import in Nuxt">
+Vue macros like `defineExpose`, `defineProps`, `defineEmits`, and reactivity helpers like `ref` and `useTemplateRef` are auto-imported. Reading code from outside Nuxt requires you to know which symbols are framework globals.
+</Note>
+
+<Note id="client-only" kind="gotcha" tip="<ClientOnly> avoids SSR mismatch for media elements" remember="Wrap DOM-API-dependent children in <ClientOnly>">
+The server can't run `<video>` playback APIs. If your component is rendered SSR-first, wrap any element whose attributes or children depend on browser-only APIs in `<ClientOnly>`. The fallback prop renders during SSR; the real children mount client-side.
+</Note>
+
+<Note id="defineExpose-auto" kind="core" tip="defineExpose is a compile-time macro — no runtime import" remember="defineExpose is a Vue compiler hook, not a runtime function">
+defineExpose, defineProps, and defineEmits are erased at compile time. They look like function calls but don't exist at runtime. This is why you can't dynamically pass arguments — they're stuck at the syntactic position.
+</Note>
+
+<Note id="await-mount" kind="cross" tip="nextTick() waits for the DOM to commit — like queueMicrotask after setState" remember="await nextTick() before reading freshly-mounted refs">
+After mounting or changing reactive state, the DOM update is asynchronous. `await nextTick()` is the equivalent of `flushSync` + a microtask in React: it lets the DOM catch up before you read or call methods on a ref. Useful for autofocus, scroll-into-view, or any "right after this state change" interaction.
+</Note>
+
+</LangTab>

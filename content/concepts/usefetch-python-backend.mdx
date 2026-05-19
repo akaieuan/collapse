@@ -1,0 +1,172 @@
+---
+slug: usefetch-python-backend
+title: useFetch with a Python backend
+summary: How to call a Python sidecar from Vue/Nuxt with proper SSR, hydration, dedup, error handling, and reactive refetch — the way Nuxt was designed for.
+category: Cross-stack
+languages:
+  - nuxt
+  - vue
+  - next
+primary: nuxt
+---
+
+## The mental shift
+
+In Nuxt, you don't write your own fetcher. `useFetch` is a composable that handles SSR (runs on the server first), hydration (deserializes the result on the client), dedup (same key = same request), and reactivity (refetches when the URL or body becomes a function that depends on a ref). Pair it with a Python-backed server route and you get a fully reactive bridge to Qiskit/NumPy/whatever.
+
+<LangTab lang="nuxt">
+
+```vue {3-12#useFetch 14-19#reactive 22-32#template} title="pages/encode.vue"
+<script setup lang="ts">
+const scheme = useState<'qpam' | 'qsm'>('scheme', () => 'qpam')
+const samples = useState<number[]>('samples', () => generateSine(64))
+
+const { data, pending, error, refresh } = await useFetch('/api/encode', {
+  method: 'POST',
+  body: computed(() => ({
+    op: 'encode',
+    scheme: scheme.value,
+    audio: samples.value,
+  })),
+  key: computed(() => `encode-${scheme.value}-${samples.value.length}`),
+  watch: [scheme, samples],
+})
+
+// You can also force a refresh manually:
+async function reroll() {
+  samples.value = generateNoise(64)
+  await refresh()
+}
+</script>
+
+<template>
+  <div>
+    <select v-model="scheme">
+      <option value="qpam">QPAM</option>
+      <option value="qsm">QSM</option>
+    </select>
+    <button @click="reroll">Reroll input</button>
+    <p v-if="pending">Encoding…</p>
+    <p v-else-if="error">Failed: {{ error.statusMessage }}</p>
+    <pre v-else>{{ data }}</pre>
+  </div>
+</template>
+```
+
+<Note id="useFetch" tip="useFetch handles SSR, hydration, dedup, and reactivity in one call">
+The killer Nuxt primitive. Top-level `await` works because Nuxt server-renders the page first. The result is serialized into the HTML, then rehydrated on the client without a refetch.
+</Note>
+
+<Note id="reactive" tip="Pass body as a computed to make it reactive">
+If you pass a plain object, useFetch only fires once. Wrap in `computed(() => ({...}))` to track ref dependencies. The `watch: [scheme, samples]` is belt-and-suspenders — explicit watch sources, even though computed should be enough.
+</Note>
+
+<Note id="template" tip="pending / error / data is the canonical render trio">
+Three branches: loading, error, success. `data` is null until the first response. `pending` is true during refetches as well as the initial load — useful for spinners on user-triggered refresh.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {2-7#composable 9-19#use 22-29#template} title="useEncode.ts + Page.vue"
+// composables/useEncode.ts (or just a regular module in plain Vue)
+import { ref, watch, type Ref } from 'vue'
+
+export function useEncode(scheme: Ref<string>, samples: Ref<number[]>) {
+  const data = ref<unknown>(null)
+  const pending = ref(false)
+  const error = ref<Error | null>(null)
+
+  async function run() {
+    pending.value = true
+    error.value = null
+    try {
+      const r = await fetch('/api/encode', {
+        method: 'POST',
+        body: JSON.stringify({ op: 'encode', scheme: scheme.value, audio: samples.value }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      data.value = await r.json()
+    } catch (e) {
+      error.value = e as Error
+    } finally {
+      pending.value = false
+    }
+  }
+
+  watch([scheme, samples], run, { immediate: true })
+  return { data, pending, error, run }
+}
+```
+
+<Note id="composable" tip="A composable is just a function that uses Vue refs">
+No class, no rules-of-hooks, no decorator. Names start with `use` by convention only — there's nothing magic about the prefix. This is Vue's equivalent of a custom React hook.
+</Note>
+
+<Note id="use" tip="Watch with immediate: true to fetch on first run, then on every dep change">
+`{ immediate: true }` is the equivalent of useEffect's "fire on mount". Without it, `useEncode` only fetches when scheme or samples change after mount.
+</Note>
+
+<Note id="template" tip="Return refs — the consumer's template auto-unwraps them">
+The composable returns refs. The page that calls it can use `data`, `pending`, `error` directly in templates without `.value`.
+</Note>
+
+</LangTab>
+
+<LangTab lang="next">
+
+```tsx {4-30#hook 33-44#component} title="useEncode.tsx"
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export function useEncode(scheme: string, samples: number[]) {
+  const [data, setData] = useState<unknown>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const latest = useRef(0);
+
+  const run = useCallback(async () => {
+    const id = ++latest.current;
+    setPending(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/encode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "encode", scheme, audio: samples }),
+      });
+      if (id !== latest.current) return;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setData(await r.json());
+    } catch (e) {
+      if (id === latest.current) setError(e as Error);
+    } finally {
+      if (id === latest.current) setPending(false);
+    }
+  }, [scheme, samples]);
+
+  useEffect(() => { void run(); }, [run]);
+
+  return { data, pending, error, run };
+}
+
+// usage
+export function EncodePage({ scheme, samples }: { scheme: string; samples: number[] }) {
+  const { data, pending, error } = useEncode(scheme, samples);
+  if (pending) return <p>Encoding…</p>;
+  if (error) return <p>Failed: {error.message}</p>;
+  return <pre>{JSON.stringify(data, null, 2)}</pre>;
+}
+```
+
+<Note id="hook" tip="React makes you write the cancellation token yourself">
+The `latest` ref is the manual version of what Vue's `watch` and Nuxt's `useFetch` do automatically. Without it, fast scheme changes can race — older fetches resolve last and clobber newer state.
+</Note>
+
+<Note id="component" tip="Same render trio — pending / error / data">
+The shape of the consumer is identical to Vue's. The difference is purely in the hook plumbing — Nuxt's useFetch is roughly a 50-line composable in Vue terms; React's equivalent needs you to think about cancellation, deps arrays, and ref-based latest tracking.
+</Note>
+
+</LangTab>

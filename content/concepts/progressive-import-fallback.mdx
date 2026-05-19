@@ -1,0 +1,260 @@
+---
+slug: progressive-import-fallback
+title: Progressive import fallback
+summary: The same code runs on a microcontroller or full Qiskit — by importing whichever quantum library is available and disabling advanced paths when the lighter one wins. "Quantum everywhere" as an idiom, not a slogan.
+category: Cross-stack
+languages:
+  - qiskit
+  - next
+  - vue
+  - nuxt
+primary: qiskit
+qiskitNote: "Pattern extracted from moth-quantum/QuantumBlur and moth-quantum/MicroMoth. The try/except + sentinel flag is how the same code runs on Arduino, Lua, JavaScript, TouchDesigner, or full Python/Qiskit."
+---
+
+## The mental shift
+
+You have a heavy library you want to use (Qiskit, a full SDK, a WASM blob) and a lighter alternative that covers 80% of the API surface (MicroMoth, a stub, a JSON shape). Instead of writing two versions of every function, you write **one** — but the import line and a sentinel flag let it adapt. When the heavy library loads, the full code path runs. When it doesn't, the lighter library takes over and a flag (`simple_python = True`) disables the paths the lighter version can't support.
+
+The contract:
+
+- **Try heavy first** — `try: from qiskit import …`. If it loads, great.
+- **Except → fall back** — `except ImportError: from micromoth import …`. Same import names, same surface API.
+- **Sentinel flag** — `simple_python = True` (or `IS_LIGHT_MODE = true`) tells the rest of the file what's loaded.
+- **Gate advanced paths** — `if simple_python: return simple_result` short-circuits anything the lighter library can't do.
+- **Surface the mode** — never silently degrade. Tell the user (or at least the logs) which library won.
+
+<LangTab lang="qiskit">
+
+```python {1-9#try-except 11-13#flag-use 15-25#hadamard 27-35#measure} title="quantum_blur.py"
+try:
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Statevector
+    from qiskit_aer import AerSimulator
+    simple_python = False
+except ImportError:
+    from micromoth import QuantumCircuit
+    Statevector = None  # micromoth doesn't expose this
+    simple_python = True
+
+print(f"[quantum_blur] running on {'micromoth (light)' if simple_python else 'qiskit (full)'}")
+
+
+def hadamard_blur(image_pixels: list[float], shots: int = 4096) -> list[float]:
+    qc = QuantumCircuit(len(image_pixels))
+    for i, px in enumerate(image_pixels):
+        qc.ry(px * 3.14159, i)
+    qc.h(range(len(image_pixels)))
+
+    if simple_python:
+        # MicroMoth doesn't have statevector — return a deterministic approximation
+        return [(px + 0.5) % 1.0 for px in image_pixels]
+
+    return list(Statevector.from_instruction(qc).probabilities())
+
+
+def measure_collapse(qc: QuantumCircuit, shots: int) -> dict:
+    if simple_python:
+        # Microcontroller path: no real measurement, return a stub
+        return {"warning": "simple_python_mode", "shots": 0, "counts": {}}
+
+    sim = AerSimulator()
+    qc.measure_all()
+    return sim.run(qc, shots=shots).result().get_counts()
+```
+
+<Note id="try-except" kind="core" tip="Same import names on both sides — the rest of the file has no idea which library won" remember="`from qiskit import QuantumCircuit` and `from micromoth import QuantumCircuit` — same identifier. The file's body is mode-agnostic.">
+The whole pattern hinges on this. If you import `qiskit.QuantumCircuit as QC` in one branch and `micromoth.Circuit as QC` in the other, you'd have to fix dozens of call sites. By making both branches expose the same name, only the import line knows there's a fork.
+</Note>
+
+<Note id="flag-use" kind="mnemonic" tip="Always print which library loaded — silent fallback is a debugging nightmare" remember="Log the mode at import time. The user (or your future self) should always know whether they're on the heavy or light path.">
+The QuantumBlur codebase uses `simple_python = True` as the public sentinel. Anyone reading the module can grep for `simple_python` and find every gated path. Critical: **announce the mode**. A library that silently falls back to the lighter version and produces subtly wrong results is the worst kind of bug.
+</Note>
+
+<Note id="hadamard" kind="gotcha" tip="Gate the advanced paths — don't try to fake Statevector with a stub object" remember="`if simple_python: return approximation`. Never instantiate a fake Statevector — let the call site see the gate.">
+A tempting anti-pattern: build a `FakeStatevector` class that mimics the qiskit API but returns lies. Resist this. The right pattern is an explicit `if simple_python: return <deterministic approximation>` branch — the caller sees the branch, the lighter mode produces lighter (but documented) results.
+</Note>
+
+<Note id="measure" kind="mistake" tip="The light path must NEVER raise — that defeats the whole point" remember="If the light library can't do this op, return a structured stub with `warning: 'simple_python_mode'`. Never raise; never crash.">
+The whole reason the pattern exists is graceful degradation. If `measure_collapse()` raises on micromoth, you've just made the lighter mode crash on import — exactly what you were trying to avoid. Always return a structured stub the caller can detect, so the UI can show "this mode doesn't support measurements" instead of a 500.
+</Note>
+
+</LangTab>
+
+<LangTab lang="next">
+
+```ts {1-3#types 5-21#dynamic 23-32#handler 34-42#feature} title="lib/quantum.ts + app/api/run/route.ts"
+// lib/quantum.ts
+type QuantumImpl = {
+  hadamardBlur: (px: number[], shots: number) => Promise<number[]>;
+  isLight: boolean;
+};
+
+let _impl: Promise<QuantumImpl> | null = null;
+function loadQuantum(): Promise<QuantumImpl> {
+  if (_impl) return _impl;
+  _impl = (async (): Promise<QuantumImpl> => {
+    try {
+      const heavy = await import("@moth/qiskit-bridge"); // hypothetical wasm/qiskit binding
+      return { hadamardBlur: heavy.hadamardBlur, isLight: false };
+    } catch {
+      const light = await import("@moth/micromoth-bridge");
+      return { hadamardBlur: light.hadamardBlur, isLight: true };
+    }
+  })();
+  return _impl;
+}
+
+// app/api/run/route.ts
+import { NextResponse } from "next/server";
+export const runtime = "nodejs";
+
+export async function POST(req: Request) {
+  const { pixels, shots } = await req.json();
+  const impl = await loadQuantum();
+  const result = await impl.hadamardBlur(pixels, shots);
+  return NextResponse.json({ mode: impl.isLight ? "light" : "heavy", result });
+}
+
+// Components can also check the mode (server component or via API)
+async function getMode() {
+  const impl = await loadQuantum();
+  return impl.isLight ? "Lightweight mode (MicroMoth)" : "Full quantum (Qiskit)";
+}
+```
+
+<Note id="types" kind="core" tip="Type the unified interface FIRST — both implementations must satisfy it" remember="`QuantumImpl` defines the shape. Both branches return a value that conforms. The rest of the app uses the type, not the source.">
+TypeScript's structural typing makes this cleaner than Python's Protocol. Define the interface once; both implementations satisfy it; consumers depend only on the interface. The bundler still tree-shakes whichever side wins.
+</Note>
+
+<Note id="dynamic" kind="core" tip="Memoize the impl promise — every call resolves the same instance" remember="`let _impl: Promise<...> | null = null` at module scope. Only the first call does the import dance.">
+Without memoization, every request to `/api/run` re-tries the heavy import, which is slow (the failure path includes the full dynamic-import resolution). Cache the resolved promise; subsequent calls await the cached value. Memory cost: one promise.
+</Note>
+
+<Note id="handler" kind="cross" tip="Surface the mode in the response — same as the Python pattern's print()" remember="`{ mode: 'light' | 'heavy', result }`. Clients render a badge or split telemetry.">
+This is the JS equivalent of the Python `print(f"[mode] ...")`. The mode rides along on every response so the client (or your logs) can show what's actually running. Demo-day insurance.
+</Note>
+
+<Note id="feature" kind="gotcha" tip="Don't try-catch around dynamic import() at every call site — centralize the fallback" remember="One place handles the try/catch (lib/quantum.ts). API routes/components just await loadQuantum().">
+Bad pattern: every API route does its own `try { import heavy } catch { import light }`. You'll end up with subtly different fallback behavior in different routes. Centralize the resolver in `lib/quantum.ts` (or wherever) and depend on the unified `QuantumImpl` everywhere.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1-3#composable 5-19#resolve 22-31#use 34-40#template} title="composables/useQuantum.ts + BlurDemo.vue"
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+
+type Impl = { hadamardBlur: (px: number[]) => Promise<number[]>; isLight: boolean }
+
+const impl = ref<Impl | null>(null)
+const mode = computed(() => {
+  if (!impl.value) return 'loading'
+  return impl.value.isLight ? 'light' : 'heavy'
+})
+
+onMounted(async () => {
+  try {
+    const heavy = await import('@moth/qiskit-bridge')
+    impl.value = { hadamardBlur: heavy.hadamardBlur, isLight: false }
+  } catch {
+    const light = await import('@moth/micromoth-bridge')
+    impl.value = { hadamardBlur: light.hadamardBlur, isLight: true }
+  }
+})
+
+const result = ref<number[] | null>(null)
+const pending = ref(false)
+async function run(pixels: number[]) {
+  if (!impl.value) return
+  pending.value = true
+  result.value = await impl.value.hadamardBlur(pixels)
+  pending.value = false
+}
+</script>
+
+<template>
+  <div>
+    <span class="badge" :data-mode="mode">{{ mode }}</span>
+    <button @click="run(currentPixels)" :disabled="pending || !impl">
+      {{ pending ? 'Blurring…' : mode === 'loading' ? 'Loading library…' : 'Blur' }}
+    </button>
+    <pre v-if="result">{{ result }}</pre>
+  </div>
+</template>
+```
+
+<Note id="composable" kind="cross" tip="Same fallback shape as the Next route — just in a composable instead of a module" remember="Try heavy → except → light. The composable exposes mode + run().">
+Vue's composable replaces the Node module-level resolver. The pattern is identical: try to load the heavy library, fall back to the light one, expose a ref for the resolved implementation. Each component that uses the composable gets its own instance, but onMounted ensures the import only runs once per mount.
+</Note>
+
+<Note id="resolve" kind="mistake" tip="onMounted, not setup — dynamic import in setup() is SSR-incompatible" remember="`onMounted(async () => ...)` — only run on the client. Dynamic imports of native deps in setup() will crash SSR.">
+If the heavy library has any browser-specific deps (Web Audio, WebGPU, DOM), importing it in `setup()` will execute during server-side rendering and crash. `onMounted` guarantees client-only execution. Trade-off: there's a brief "loading library…" state on first mount.
+</Note>
+
+<Note id="use" kind="gotcha" tip="Guard the run() call — impl might not be resolved yet" remember="`if (!impl.value) return` at the top of run(). The button is disabled until resolved.">
+Race condition guard: the user clicks "Blur" before the dynamic import finishes. Without the guard, you'd hit `Cannot read property hadamardBlur of null`. With it, the button is disabled and the click is a no-op until the library lands.
+</Note>
+
+<Note id="template" kind="mnemonic" tip="Render the mode as a data attribute — CSS-style it without leaking config into props" remember="`:data-mode='mode'` — three states: 'loading', 'light', 'heavy'. Color-code with CSS attribute selectors.">
+`[data-mode="light"]` and `[data-mode="heavy"]` can be styled differently in CSS — yellow badge for light mode, green for heavy, gray pulse for loading. UX of "which library is in charge" is now visible and styleable without prop drilling.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```ts {1-9#plugin 11-23#composable 26-32#page} title="plugins/quantum.client.ts + composables/useQuantum.ts + pages/blur.vue"
+// plugins/quantum.client.ts  (only runs on the client — note the .client suffix)
+export default defineNuxtPlugin(async () => {
+  try {
+    const heavy = await import('@moth/qiskit-bridge')
+    return { provide: { quantum: { ...heavy, isLight: false } } }
+  } catch {
+    const light = await import('@moth/micromoth-bridge')
+    return { provide: { quantum: { ...light, isLight: true } } }
+  }
+})
+
+// composables/useQuantum.ts
+export function useQuantum() {
+  const { $quantum } = useNuxtApp()
+  const mode = $quantum.isLight ? 'light' : 'heavy'
+  const result = ref<number[] | null>(null)
+  const pending = ref(false)
+  async function run(pixels: number[]) {
+    pending.value = true
+    result.value = await $quantum.hadamardBlur(pixels)
+    pending.value = false
+  }
+  return { mode, result, pending, run }
+}
+
+// pages/blur.vue
+<script setup lang="ts">
+const { mode, result, pending, run } = useQuantum()
+</script>
+
+<template>
+  <div>
+    <span class="badge">mode: {{ mode }}</span>
+    <button @click="run(getPixels())" :disabled="pending">{{ pending ? 'Blurring…' : 'Blur' }}</button>
+  </div>
+</template>
+```
+
+<Note id="plugin" kind="core" tip="The .client.ts suffix tells Nuxt this plugin runs ONLY on the client — bypasses SSR" remember="`plugins/quantum.client.ts` — auto-registered, client-only. SSR ships placeholder; client hydrates with real impl.">
+Nuxt's file-based plugin convention solves the SSR problem cleanly. `.client.ts` plugins never run on the server. SSR renders with `$quantum` undefined; the client plugin runs on mount, hydrates `$quantum`, and the app becomes interactive. The mode badge can show "loading" during this window.
+</Note>
+
+<Note id="composable" kind="cross" tip="$quantum is the auto-injected app helper — Nuxt's DI without React's context boilerplate" remember="`useNuxtApp().$quantum` accesses anything provided by a plugin. Composables wrap it for typed ergonomics.">
+Compare to Next: you'd need a React Context, a Provider in the layout, a useContext hook, and a TypeScript declaration file. Nuxt does it with one plugin file and a typed `useNuxtApp()` call. The provide/inject pattern is the killer feature for cross-cutting concerns like this.
+</Note>
+
+<Note id="page" kind="mnemonic" tip="Pages stay clean — all the fallback complexity lives in the plugin layer" remember="The page only sees `mode`, `result`, `pending`, `run`. The try/except is buried under three layers of abstraction.">
+This is the well-architected version: the page has zero knowledge of the fallback mechanic. If you swap MicroMoth for some future even-lighter alternative, you change one file (the plugin). Pages, components, and other composables don't notice.
+</Note>
+
+</LangTab>

@@ -1,0 +1,187 @@
+---
+slug: design-tokens-cross-stack
+title: Design tokens, cross-stack
+summary: Tokens live in CSS variables, framework agnostic. Tailwind / Vue / Nuxt all consume the same `--foreground`, `--brand`, `--radius` values. The token layer is the design system; the framework is just plumbing.
+category: Cross-stack patterns
+languages:
+  - next
+  - vue
+  - nuxt
+primary: next
+---
+
+## The mental shift
+
+A design system is **not a component library**. A design system is the **token layer** — the named values for color, type scale, spacing, radius, motion — that components consume. Components are downstream of tokens; tokens are the shared vocabulary.
+
+The cross-stack win: CSS custom properties (variables) are framework-agnostic. Define them once in CSS, consume them in any framework. Tailwind v4, Vue scoped styles, Nuxt page styles all read the same `var(--foreground)`. You don't need a framework-specific theming library — you need a CSS file and a discipline.
+
+The contract:
+
+- **Tokens defined in a single CSS layer** — `:root` for light, `.dark` for dark, both as custom properties.
+- **Tailwind (or equivalent) maps to them** — `--color-foreground: var(--foreground)` in the theme block; utilities like `text-foreground` resolve to the variable.
+- **Components consume via the framework's style system** — Tailwind classes, Vue scoped CSS, Nuxt CSS modules. They all bottom out at the same variables.
+- **Theme switching = swap the variables** — toggle a class on `<html>`, the variables change, every component re-renders with new values for free.
+
+<LangTab lang="next">
+
+```css {1#layer 3-13#root 15-23#dark 26-36#theme} title="app/globals.css"
+@import "tailwindcss";
+
+:root {
+  --background: oklch(0.97 0.004 80);
+  --foreground: oklch(0.16 0.01 60);
+  --muted: oklch(0.94 0.005 80);
+  --muted-foreground: oklch(0.45 0.01 60);
+  --brand: oklch(0.62 0.18 35);
+  --border: oklch(0.86 0.008 70);
+  --radius: 0.5rem;
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+}
+
+.dark {
+  --background: oklch(0.14 0.005 60);
+  --foreground: oklch(0.97 0 0);
+  --muted: oklch(0.23 0.008 60);
+  --muted-foreground: oklch(0.7 0.01 60);
+  --brand: oklch(0.7 0.18 40);
+  --border: oklch(1 0 0 / 12%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-brand: var(--brand);
+  --color-border: var(--border);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+}
+```
+
+<Note id="layer" kind="core" tip="@import 'tailwindcss' goes first — order is load-bearing in cascade layers" remember="Tailwind import → :root → .dark → @theme. Wrong order = subtle override bugs.">
+Tailwind v4 uses CSS cascade layers (`@layer base`, `@layer components`). Your `:root` and `.dark` declarations must come AFTER the Tailwind import so they live in the right layer order. Wrong order means Tailwind's defaults can shadow your tokens in unpredictable ways.
+</Note>
+
+<Note id="root" kind="mnemonic" tip="oklch() is the right color space for tokens — perceptually uniform, predictable mixing" remember="oklch(L C H) — lightness, chroma, hue. Predictable lightness ramps. Use this not hex.">
+oklch separates lightness from chroma cleanly. A `--foreground` at `oklch(0.16 …)` and a `--muted-foreground` at `oklch(0.45 …)` will be perceptually 29% apart in lightness — predictable. Hex values can't promise this. The downside: harder to eyeball; the upside: every transition between tokens is well-behaved.
+</Note>
+
+<Note id="dark" kind="core" tip=".dark .selector — the dark theme is just a class on <html>" remember=".dark = the override class. next-themes adds/removes it on <html>. No JS for the swap.">
+The whole dark-mode mechanism is one class on the `<html>` element. next-themes (or vue-color-mode, or @nuxtjs/color-mode) toggles it; the cascade does the rest. Every variable redefined under `.dark` overrides the `:root` value. Components that consume `var(--foreground)` don't know or care.
+</Note>
+
+<Note id="theme" kind="gotcha" tip="@theme inline maps tokens → Tailwind utility names. Without this, text-foreground doesn't resolve" remember="@theme inline { --color-X: var(--X) } — this is what makes `text-foreground` work. Tailwind v4-specific.">
+Tailwind v3 used `tailwind.config.js`. v4 uses the `@theme` directive inside CSS. The `inline` variant says "resolve these at build time as references to the runtime variables." Without it, `text-foreground` is just an unknown utility. With it, it compiles to `color: var(--foreground)`.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1-13#css 16-25#component 27-32#scoped} title="assets/tokens.css + components/Card.vue"
+/* assets/tokens.css — global, imported in main.ts */
+:root {
+  --background: oklch(0.97 0.004 80);
+  --foreground: oklch(0.16 0.01 60);
+  --muted: oklch(0.94 0.005 80);
+  --brand: oklch(0.62 0.18 35);
+  --radius: 0.5rem;
+}
+:root.dark {
+  --background: oklch(0.14 0.005 60);
+  --foreground: oklch(0.97 0 0);
+  --muted: oklch(0.23 0.008 60);
+  --brand: oklch(0.7 0.18 40);
+}
+
+<!-- components/Card.vue -->
+<template>
+  <article class="card">
+    <h3 class="title"><slot name="title" /></h3>
+    <div class="body"><slot /></div>
+  </article>
+</template>
+
+<style scoped>
+.card { background: var(--background); border-radius: var(--radius); color: var(--foreground); padding: 1rem; }
+.title { font-weight: 600; line-height: 1.3; }
+.body { color: var(--muted); margin-top: 0.5rem; }
+</style>
+```
+
+<Note id="css" kind="cross" tip="Same :root / :root.dark structure as Next — the tokens are stack-agnostic" remember="Vue doesn't need a Tailwind-style mapping layer. Components just consume var(--X) directly.">
+The key insight: tokens *are not framework-specific*. The same `:root` block works in Vue, Next, Nuxt, or vanilla HTML. The difference is how components access them — in Tailwind you go through utility classes; in Vue's scoped CSS, you reference `var(--X)` directly.
+</Note>
+
+<Note id="component" kind="core" tip="Component templates stay structural — no theme-specific values in the markup" remember="The template never says 'dark' or 'light'. It says 'card', 'title', 'body'. Tokens flow through CSS.">
+A theming-clean component never mentions theme in its template. It declares structural classes (`card`, `title`, `body`); the styles read tokens; the tokens swap based on `<html class="dark">`. The component is theme-agnostic; the system handles theming.
+</Note>
+
+<Note id="scoped" kind="mnemonic" tip="<style scoped> is Vue's CSS module without the import dance — :scope tokens travel automatically" remember="scoped CSS doesn't isolate :root vars — they pierce through. Use scoped for component styles; rely on global :root for tokens.">
+`<style scoped>` adds a data-attribute to the component's elements and rewrites selectors. It does NOT scope CSS custom properties — those still cascade from `:root`. This is the right behavior: you want global tokens, locally-scoped component styles. Vue gets this exactly right by default.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```vue {2-9#config 12-22#css 25-34#component 36-39#style} title="nuxt.config.ts + assets/tokens.css + components/Card.vue"
+<!-- nuxt.config.ts -->
+<script lang="ts">
+export default defineNuxtConfig({
+  css: ['~/assets/tokens.css'],
+  modules: ['@nuxtjs/color-mode'],
+  colorMode: {
+    classSuffix: '', // .dark instead of .dark-mode
+  },
+})
+</script>
+
+<!-- assets/tokens.css — auto-loaded via nuxt.config -->
+:root {
+  --background: oklch(0.97 0.004 80);
+  --foreground: oklch(0.16 0.01 60);
+  --brand: oklch(0.62 0.18 35);
+  --radius: 0.5rem;
+}
+:root.dark {
+  --background: oklch(0.14 0.005 60);
+  --foreground: oklch(0.97 0 0);
+  --brand: oklch(0.7 0.18 40);
+}
+
+<!-- components/Card.vue — auto-imported as <Card> -->
+<template>
+  <article class="card">
+    <h3 class="card-title"><slot name="title" /></h3>
+    <div class="card-body"><slot /></div>
+  </article>
+</template>
+
+<style scoped>
+.card { background: var(--background); color: var(--foreground); border-radius: var(--radius); padding: 1rem; }
+.card-title { font-weight: 600; }
+.card-body { margin-top: 0.5rem; opacity: 0.85; }
+</style>
+```
+
+<Note id="config" kind="cross" tip="css: [...] in nuxt.config replaces the manual main.ts import — auto-loaded on every page" remember="nuxt.config css: ['~/assets/tokens.css'] = global. No per-page import needed. Nuxt handles SSR injection.">
+Nuxt's `css` config array is the place to declare global stylesheets. The token file gets injected into every page's head during SSR — so the variables exist *before* the first paint, not after hydration. That's why theme-switching is flash-free in Nuxt by default.
+</Note>
+
+<Note id="css" kind="core" tip="Same tokens as Next/Vue — proves the framework-agnosticism of the pattern" remember="Same CSS file would work in all three stacks. That's the win — tokens are framework-agnostic by construction.">
+Take the exact `assets/tokens.css` file and copy it into a Next project's `app/globals.css` — it works. Copy it into a Vue project's `main.ts` import — it works. The token layer is the portable artifact of your design system. Components are downstream; framework is downstream of components.
+</Note>
+
+<Note id="component" kind="mnemonic" tip="Nuxt auto-imports components from /components — never import Card, just use <Card>" remember="<Card> works without import. components/Card.vue → globally available as <Card>.">
+Nuxt's auto-import for components and composables means components don't carry import boilerplate. This makes refactor-safe component renames easier (rename the file, references update automatically across the project) and reduces visual noise in templates.
+</Note>
+
+<Note id="style" kind="gotcha" tip=":root.dark not html.dark — Nuxt's color-mode applies the class to :root by default" remember="@nuxtjs/color-mode toggles class on <html> = :root selector. Test by inspecting <html class='dark'>.">
+@nuxtjs/color-mode applies the dark/light class to `<html>`. CSS-wise, `<html>` is the `:root` element. So `:root.dark { … }` is the correct selector. Easy to get wrong if you copy a `html.dark` selector from another framework's docs — same thing, different idiom.
+</Note>
+
+</LangTab>

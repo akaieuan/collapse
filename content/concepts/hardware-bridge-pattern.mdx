@@ -1,0 +1,334 @@
+---
+slug: hardware-bridge-pattern
+title: Hardware bridge over public URL
+summary: A three-tier pattern for putting lab hardware behind a cloud app — local Flask server, ngrok tunnel, cloud proxy with graceful timeout. Works for quantum rigs, lab equipment, anything on-prem.
+category: Quantum ops
+languages:
+  - qiskit
+  - next
+  - vue
+  - nuxt
+primary: qiskit
+qiskitNote: "Pattern extracted from moth-quantum/deutschetelekom-simul — Q1 Synth's polarizer rig and other on-prem hardware demos use this exact three-tier layout."
+---
+
+## The mental shift
+
+Your quantum hardware (or any lab equipment) lives on a specific machine that can't be moved to the cloud. But you want users to interact with it from a web UI. The naive answer is "deploy the controller to the cloud" — impossible if it talks to physical USB/serial/proprietary drivers. The Moth answer is a three-tier sandwich:
+
+1. **Bridge** — a Flask server running on the lab machine, owning the hardware drivers. Exposes `POST /api/hardware/execute` and `GET /api/status`.
+2. **Tunnel** — ngrok (or Tailscale, Cloudflare Tunnel) gives the bridge a public HTTPS URL.
+3. **Cloud proxy** — a Heroku/Vercel Node server that forwards user requests to the tunnel URL, with timeout + AbortController + graceful "bridge offline" fallback.
+
+The wins: lab hardware stays behind its firewall. The cloud app is publicly addressable. If the lab machine sleeps or the tunnel drops, the cloud app degrades gracefully instead of 500ing.
+
+<LangTab lang="qiskit">
+
+```python {1-6#imports 8-16#endpoints 18-29#execute 31-37#run} title="bridge.py — runs on the lab machine"
+from flask import Flask, request, jsonify
+import os
+import time
+from device_controller import control_real_hardware, get_status
+
+app = Flask(__name__)
+START_TIME = time.time()
+
+@app.get("/api/status")
+def status():
+    return jsonify({
+        "ok": True,
+        "uptime_seconds": int(time.time() - START_TIME),
+        "hardware_ready": get_status().get("ready", False),
+        "version": "bridge/0.1.0",
+    })
+
+@app.post("/api/hardware/execute")
+def execute():
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = control_real_hardware(payload.get("circuit"), shots=payload.get("shots", 4096))
+        return jsonify({"ok": True, "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/healthz")
+def healthz():
+    return "ok", 200
+
+if __name__ == "__main__":
+    # Pair this with: ngrok http 5000 (or `tailscale serve`, or Cloudflare Tunnel)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+```
+
+<Note id="imports" kind="core" tip="The bridge owns the hardware imports — the cloud server never imports them" remember="device_controller (and any vendor SDK) lives ONLY on the bridge. Cloud has no idea what physical thing it's talking to.">
+This is the firewall: vendor SDKs (`pythonnet`, ThorLabs CLR, NI-DAQ, qiskit_ibm_runtime with API keys) only need to exist on the lab machine. The cloud server speaks JSON over HTTPS — completely agnostic about what's on the other side. Trying to install vendor drivers on Heroku is a losing battle; this pattern avoids it entirely.
+</Note>
+
+<Note id="endpoints" kind="mnemonic" tip="Three endpoints, always — status, execute, healthz" remember="GET /api/status (richly informative) + POST /api/hardware/execute (the work) + GET /api/healthz (k8s-style liveness).">
+**Status** is for the UI: "is the rig up?" with structured fields the frontend can render. **Execute** is the actual work endpoint. **Healthz** is a single-byte "ok" for tunnel/uptime monitors (UptimeRobot, Better Stack) that just want a 200. Don't conflate them.
+</Note>
+
+<Note id="execute" kind="mistake" tip="Wrap the call in try/except — never let hardware exceptions kill the Flask process" remember="One bad circuit shouldn't kill the bridge. try/except → 500 with `error` field. Flask stays up.">
+A common bug: vendor SDK raises some obscure CLR exception, Flask doesn't catch it, the process dies, ngrok disconnects, the cloud app starts 502ing. The fix: catch broadly, return 500 with a structured error payload, log the trace locally. The bridge process survives.
+</Note>
+
+<Note id="run" kind="gotcha" tip="host='0.0.0.0' is REQUIRED — localhost binding won't be reachable through the tunnel" remember="ngrok forwards to whatever the bridge binds to. localhost (127.0.0.1) is local-only. 0.0.0.0 listens on all interfaces.">
+A first-day-of-deployment classic: dev binds to `127.0.0.1`, ngrok forwards traffic but the bridge ignores it because the source IP isn't loopback. Always bind to `0.0.0.0` for tunneled services. (Yes, this means firewall rules matter — the lab machine should still firewall the port off the local network.)
+</Note>
+
+</LangTab>
+
+<LangTab lang="next">
+
+```ts {1-6#imports 8-13#config 15-31#proxy 33-45#handler} title="app/api/run-circuit/route.ts"
+import { NextResponse } from "next/server";
+import { z } from "zod";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const BridgeURL = process.env.BRIDGE_URL; // e.g. https://abc123.ngrok-free.app
+const BridgeTimeoutMs = 30_000;
+
+const RequestSchema = z.object({
+  circuit: z.unknown(),
+  shots: z.number().int().positive().max(100_000).default(4096),
+});
+
+async function callBridge(body: unknown, signal: AbortSignal) {
+  if (!BridgeURL) throw new Error("bridge_not_configured");
+  const res = await fetch(`${BridgeURL}/api/hardware/execute`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+    // Re-validate against the tunnel each call — tunnels can be replaced live
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`bridge_${res.status}: ${detail.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+export async function POST(req: Request) {
+  const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BridgeTimeoutMs);
+  try {
+    const result = await callBridge(parsed.data, controller.signal);
+    return NextResponse.json({ source: "bridge", ...result });
+  } catch (err) {
+    return NextResponse.json(
+      { error: "bridge_unreachable", detail: String(err).slice(0, 200) },
+      { status: 503 },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+```
+
+<Note id="imports" kind="mistake" tip="runtime: 'nodejs' + maxDuration: 60 — hardware calls are slow" remember="Edge can't do AbortController with timer cleanup. maxDuration must exceed BridgeTimeoutMs.">
+Two pinning details:
+1. `runtime: 'nodejs'` because Edge runtime has subtly different AbortController behavior that bites when you also have a clearTimeout in `finally`.
+2. `maxDuration: 60` (seconds) tells Vercel/Next to allow the route to run longer than the default 10s. Hardware can be slow. If your `BridgeTimeoutMs` is 30s, the route timeout must exceed it.
+</Note>
+
+<Note id="config" kind="core" tip="One env var (BRIDGE_URL), one timeout constant — keep the proxy config tiny" remember="`BRIDGE_URL` from env. `BridgeTimeoutMs` as a const. Resist adding a config object until you actually need a second bridge.">
+You'll be tempted to add `BRIDGE_AUTH_TOKEN`, `BRIDGE_RETRY_COUNT`, `BRIDGE_FALLBACK_URL`. Don't, until you need them. The minimum viable bridge proxy is one URL + one timeout. Add the rest as the demo grows real users.
+</Note>
+
+<Note id="proxy" kind="core" tip="AbortController + signal — cancel the fetch when the timer fires" remember="`controller.signal` passed to fetch. `setTimeout(() => controller.abort(), MS)`. Don't forget clearTimeout in finally.">
+This is the standard "timeout a fetch" pattern in Node 18+. The signal cancels the underlying socket if the bridge takes too long. **Always** clearTimeout in `finally` — otherwise success cases leave a dangling timer that will abort... nothing, but still represents a leak.
+</Note>
+
+<Note id="handler" kind="gotcha" tip="503, not 500 — 'bridge unreachable' is a different class of failure" remember="503 Service Unavailable = upstream isn't responding. 500 = your code crashed. The client can retry 503 with backoff; 500 means there's a bug.">
+Returning the right status code lets the client distinguish "the lab machine is sleeping, try again in 30s" from "this app is broken." A polite 503 with a `Retry-After` header lets a well-built client back off; a 500 invites bug reports.
+</Note>
+
+</LangTab>
+
+<LangTab lang="vue">
+
+```vue {1-3#composable 5-22#state 24-43#run 46-58#template} title="composables/useHardware.ts + RigStatus.vue"
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
+
+interface BridgeStatus {
+  ok: boolean
+  hardware_ready: boolean
+  uptime_seconds: number
+}
+
+const status = ref<BridgeStatus | null>(null)
+const reachable = ref(false)
+const result = ref<unknown>(null)
+const pending = ref(false)
+const error = ref<string | null>(null)
+
+async function pollStatus() {
+  try {
+    const res = await fetch('/api/bridge-status', { cache: 'no-store' })
+    status.value = await res.json()
+    reachable.value = !!status.value?.ok
+  } catch {
+    reachable.value = false
+  }
+}
+
+async function run(circuit: unknown, shots = 4096) {
+  pending.value = true
+  error.value = null
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch('/api/run-circuit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ circuit, shots }),
+      signal: controller.signal,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    result.value = await res.json()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'unknown_error'
+  } finally {
+    clearTimeout(timeoutId)
+    pending.value = false
+  }
+}
+
+let pollHandle: ReturnType<typeof setInterval>
+onMounted(() => { pollStatus(); pollHandle = setInterval(pollStatus, 15_000) })
+onUnmounted(() => clearInterval(pollHandle))
+</script>
+
+<template>
+  <div>
+    <div class="status-bar">
+      <span :class="['dot', reachable ? 'dot-green' : 'dot-red']" />
+      <span v-if="reachable">Rig reachable · uptime {{ status?.uptime_seconds }}s</span>
+      <span v-else>Bridge offline — degrade to simulator</span>
+    </div>
+    <button @click="run(currentCircuit)" :disabled="pending || !reachable">
+      {{ pending ? 'Running…' : 'Run on hardware' }}
+    </button>
+    <pre v-if="error" class="error">{{ error }}</pre>
+    <pre v-else-if="result">{{ result }}</pre>
+  </div>
+</template>
+```
+
+<Note id="composable" kind="cross" tip="Two pieces of state worth exposing — status (rich, slow-polled) and result (single-call)" remember="Poll /api/bridge-status every 15s. Call /api/run-circuit on-demand. Don't mix the two endpoints.">
+The Vue composable mirrors the bridge's two-endpoint design. Status is a slow, cheap GET that runs on an interval — perfect for the "is the rig up?" badge. Execute is an expensive POST that runs on user action only. Keep them separate so the badge can update even while a run is in flight.
+</Note>
+
+<Note id="state" kind="mnemonic" tip="reachable is derived state, not an independent ref — drives button disabled state" remember="`reachable = !!status?.ok`. UI binds to reachable. If the badge says red, the button is disabled.">
+A common UX bug: button stays enabled even when the bridge is unreachable, user clicks, gets a 503, blames the app. The fix: derive `reachable` from the polled status, bind `disabled` to it. Now the user can see *and* feel the bridge state.
+</Note>
+
+<Note id="run" kind="gotcha" tip="AbortController in the browser is identical to Node's — same try/finally cleanup" remember="`new AbortController()` + clearTimeout in finally. Browser Fetch API behaves like Node's.">
+This is the cross-environment win: the exact same AbortController + setTimeout dance works in the browser (Vue composable) and on the server (Next route handler). One mental model, two execution environments. Same `signal: controller.signal` argument to `fetch`.
+</Note>
+
+<Note id="template" kind="mnemonic" tip="Always render the rig state visibly — never hide bridge problems from the user" remember="Status badge above the button. Red dot = degraded. Tell the user before they hit run.">
+The status bar is doing two jobs: telling the user what's happening and serving as the kill-switch for premature clicks. Both are important. A demo where the user clicks "Run" five times before noticing the bridge is offline is a demo where the user lost trust. Surface it.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```ts {1-9#runtime 12-21#status-handler 24-44#run-handler 47-59#page} title="nuxt.config.ts + server/api/* + pages/run.vue"
+// nuxt.config.ts
+export default defineNuxtConfig({
+  runtimeConfig: {
+    bridgeUrl: process.env.BRIDGE_URL,
+    bridgeTimeoutMs: 30_000,
+    public: {
+      hasHardware: !!process.env.BRIDGE_URL,
+    },
+  },
+})
+
+// server/api/bridge-status.get.ts
+export default defineEventHandler(async () => {
+  const cfg = useRuntimeConfig()
+  if (!cfg.bridgeUrl) return { ok: false, reason: 'not_configured' }
+  try {
+    return await $fetch(`${cfg.bridgeUrl}/api/status`, {
+      timeout: 5_000,
+      retry: 0,
+    })
+  } catch {
+    return { ok: false, reason: 'unreachable' }
+  }
+})
+
+// server/api/run-circuit.post.ts
+export default defineEventHandler(async (event) => {
+  const cfg = useRuntimeConfig()
+  const body = await readBody(event)
+  if (!cfg.bridgeUrl) {
+    throw createError({ statusCode: 503, statusMessage: 'bridge_not_configured' })
+  }
+  try {
+    const result = await $fetch(`${cfg.bridgeUrl}/api/hardware/execute`, {
+      method: 'POST',
+      body,
+      timeout: cfg.bridgeTimeoutMs,
+      retry: 0,
+    })
+    return { source: 'bridge', ...result }
+  } catch (err: any) {
+    throw createError({
+      statusCode: err.statusCode === 503 ? 503 : 502,
+      statusMessage: 'bridge_unreachable',
+      data: { detail: String(err.message ?? err).slice(0, 200) },
+    })
+  }
+})
+
+// pages/run.vue
+<script setup lang="ts">
+const { data: status, refresh } = await useFetch('/api/bridge-status', {
+  key: 'bridge-status',
+  server: false, // client-only — bridge can be slow on first render
+})
+const { execute: run, pending, data: result, error } = useFetch('/api/run-circuit', {
+  method: 'POST',
+  body: { circuit: getCircuit(), shots: 4096 },
+  immediate: false,
+})
+
+// Refresh every 15s
+const handle = setInterval(refresh, 15_000)
+onBeforeUnmount(() => clearInterval(handle))
+</script>
+```
+
+<Note id="runtime" kind="core" tip="Public flag for the client (hasHardware) + private URL/timeout for the server" remember="`runtimeConfig.public.hasHardware` is visible to the browser. `runtimeConfig.bridgeUrl` stays server-only — ngrok URL never ships to the client bundle.">
+Critical security move: the ngrok URL is a private endpoint. If it ships to the client, anyone can scrape it from your JS bundle and hit your lab machine directly, bypassing your auth/rate-limiting. Keep it private. Expose only a public boolean (`hasHardware`) so the client knows whether to render hardware-mode UI.
+</Note>
+
+<Note id="status-handler" kind="cross" tip="$fetch built-in timeout — no manual AbortController dance in Nuxt" remember="`$fetch(url, { timeout: 5_000, retry: 0 })` — built-in. Cleaner than manual AbortController on the Node side.">
+Nuxt's `$fetch` (and the underlying ofetch) has `timeout` and `retry` options baked in. No need for the AbortController + setTimeout + clearTimeout boilerplate that Next requires. On the *client* side you'd still use the manual pattern (Vue tab); on the *server* side, lean on `$fetch`.
+</Note>
+
+<Note id="run-handler" kind="gotcha" tip="Map bridge errors to 502 (bad gateway) — not 500 — Nuxt's createError preserves the structured data" remember="502 = upstream gave us a bad response. 503 = we couldn't even reach upstream. Pick the right one; clients differentiate.">
+HTTP status semantics matter here. **502 Bad Gateway**: bridge responded, but with something we can't proxy (5xx from bridge). **503 Service Unavailable**: bridge isn't reachable at all (DNS failure, ngrok offline, timeout). **500**: your proxy code threw. Picking the right code lets monitoring distinguish "lab machine asleep" from "the proxy is buggy."
+</Note>
+
+<Note id="page" kind="mnemonic" tip="server: false on the status fetch — don't block SSR on a flaky tunnel" remember="`useFetch(url, { server: false })` — render the page SSR, fetch status on the client. Tunnel slowness doesn't tank time-to-first-byte.">
+The default of `useFetch` runs both server-side (during SSR) and client-side (hydration). For a flaky-by-nature endpoint like an ngrok tunnel, you don't want SSR to wait 5 seconds for the status response — that tanks your Core Web Vitals. `server: false` defers the call to the client, where it can pulse-poll without affecting the initial paint.
+</Note>
+
+</LangTab>

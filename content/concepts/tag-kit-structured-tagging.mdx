@@ -1,0 +1,113 @@
+---
+slug: tag-kit-structured-tagging
+title: tag-kit — structured tagging
+summary: Why string tags fail for HITL workflows, and how `@tag-kit/core` makes per-modality scoping, scope-aware agreement scoring, and stable taxonomy possible.
+category: Toolkit patterns
+languages:
+  - next
+  - qiskit
+primary: next
+---
+
+## The mental shift
+
+A "tag" in most apps is a freeform string the user types. That falls apart the moment you want to aggregate, score, or compare across reviewers — `"harassment"` and `"Harassment"` and `"harass"` all become different tags. tag-kit flips this: the **catalog** defines the vocabulary upfront, every tag is a stable `tagId`, and operations like "did these two reviewers agree?" become well-defined functions over the catalog.
+
+The pattern is also useful outside HITL. The same primitives work for tagging quantum circuit gates by purpose (entangler, measurement, reset), tagging audio segments by content (speech/music/noise), or tagging qubits by role (data/ancilla/control).
+
+<LangTab lang="next">
+
+```ts {1-7#imports 9-21#catalog 23-30#tags 32-38#scoring} title="tag-circuit-gates.ts"
+import {
+  defineCatalog,
+  filterByModality,
+  tagPrecisionRecall,
+  type ReviewerTag,
+  type ExpectedTag,
+} from "@tag-kit/core";
+
+const CATALOG = defineCatalog([
+  {
+    tagId: "gate.entangler",
+    displayName: "Entangling gate",
+    description: "Two-qubit gate that creates entanglement (cx, cz, swap, ...)",
+    applicableModalities: ["circuit"],
+    severity: "info",
+    group: "Structural",
+    supportsSegmentScope: true,  // can target specific gate indices
+  },
+  // ...gate.measurement, gate.reset, gate.parameterized, ...
+]);
+
+const reviewerA: ReviewerTag[] = [
+  { tagId: "gate.entangler", scope: { kind: "segment", from: 5, to: 7 }, modality: "circuit" },
+  { tagId: "gate.measurement", scope: { kind: "segment", from: 12, to: 15 }, modality: "circuit" },
+];
+const expected: ExpectedTag[] = [
+  { tagId: "gate.entangler", scope: { kind: "segment", from: 5, to: 7 }, modality: "circuit" },
+  { tagId: "gate.measurement", scope: { kind: "segment", from: 12, to: 15 }, modality: "circuit" },
+];
+
+const result = tagPrecisionRecall(reviewerA, expected, CATALOG);
+console.log(result);
+// { precision: 1, recall: 1, perTag: { 'gate.entangler': {...}, 'gate.measurement': {...} } }
+```
+
+<Note id="imports" tip="@tag-kit/core is framework-agnostic — pure TypeScript, no React/Vue">
+The core package handles schema, matching, and scoring. The companion @tag-kit/ui package wraps these in React components but you don't need it for backend or non-React use.
+</Note>
+
+<Note id="catalog" tip="defineCatalog is the single source of truth for your taxonomy">
+Every tagId here can be referenced in CSVs, database rows, and reviewer UIs. Renaming a tag means updating the catalog in one place and the change ripples. Compare to free-text tags where renames mean a manual data migration.
+</Note>
+
+<Note id="tags" tip='scope: { kind: "segment", from, to } — annotators target specific ranges, not whole assets'>
+The tag-kit insight is that "the audio at 0:12-0:24 is harassment; the rest is fine" is a fundamentally different statement than "the asset is harassment." Scope makes that distinction first-class.
+</Note>
+
+<Note id="scoring" tip="tagPrecisionRecall handles the overlap math — you don't have to">
+Two reviewers tagging the same range = full agreement. Disjoint = no agreement. Partial overlap = partial credit. The math is non-trivial and easy to get wrong; tag-kit ships the tested implementation.
+</Note>
+
+</LangTab>
+
+<LangTab lang="qiskit">
+
+```python {1-9#circuit 11-15#tag-export 17-22#json} title="tag_circuit.py"
+from qiskit import QuantumCircuit
+import json
+
+qc = QuantumCircuit(4, 4)
+qc.h(0)
+qc.cx(0, 1)        # gates 1
+qc.cx(1, 2)        # gate 2 — also entangler
+qc.cx(2, 3)        # gate 3 — also entangler
+qc.measure_all(add_bits=False)
+
+def auto_tag(circuit):
+    tags = []
+    entangler_names = {"cx", "cz", "swap"}
+    for idx, instr in enumerate(circuit.data):
+        if instr.operation.name in entangler_names:
+            tags.append({"tagId": "gate.entangler", "scope": {"kind": "segment", "from": idx, "to": idx}, "modality": "circuit"})
+        elif instr.operation.name == "measure":
+            tags.append({"tagId": "gate.measurement", "scope": {"kind": "segment", "from": idx, "to": idx}, "modality": "circuit"})
+    return tags
+
+print(json.dumps(auto_tag(qc), indent=2))
+# Feed this into tag-kit's reviewer-vs-expected scoring on the JS side.
+```
+
+<Note id="circuit" tip="A 'gate index' is a stable handle — circuits are ordered lists">
+`circuit.data` is an indexed list of `CircuitInstruction` objects. Index 0 is the first appended gate. Use indices as the unit of scope when you tag — they survive serialization.
+</Note>
+
+<Note id="tag-export" tip="Auto-tagging is the cheap baseline — humans correct from there">
+For a HITL loop on circuit annotation: have the rule-based tagger produce tags first, then ask reviewers to confirm/correct. Score the rule's precision/recall as the system improves.
+</Note>
+
+<Note id="json" tip="Output JSON that matches @tag-kit/core's wire shape exactly">
+The keys (`tagId`, `scope.kind`, `scope.from`, `modality`) match the TypeScript types from tag-kit. Send this over the Python sidecar and the JS side can score without translation.
+</Note>
+
+</LangTab>
