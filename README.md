@@ -192,11 +192,3 @@ Active development.
 ![~/.claude/skills/ directory viewer](public/screenshots/05-skills.png)
 
 ![Reactivity model — Next.js and Vue side-by-side](public/screenshots/06-lesson-grid-vue.png)
-
----
-
-## Credits
-
-Built by [ubik.studio](https://ubik.studio). Powered by [Claude Code](https://claude.com/claude-code).
-
-© 2026 ubik.studio.
