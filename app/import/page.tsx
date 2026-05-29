@@ -2,7 +2,8 @@ import { ImportFlow } from "./import-flow";
 
 export const metadata = {
   title: "Import notebook · Collapse",
-  description: "Collapse a Jupyter notebook or MyST chapter into a Claude skill.",
+  description:
+    "The notebook on-ramp. Collapse Jupyter (.ipynb) or MyST (.md) chapters into Claude Code skills — one of three ingestors in the Collapse framework.",
 };
 
 export default function ImportPage() {
@@ -15,11 +16,11 @@ export default function ImportPage() {
           </p>
           <h1 className="text-3xl font-semibold tracking-tight">Notebook → skill</h1>
           <p className="max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
-            Drop in a Jupyter notebook
+            One of three on-ramps in the Collapse framework. Drop in a Jupyter notebook
             (<code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px]">.ipynb</code>)
             or a MyST chapter
-            (<code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px]">.md</code>).
-            Pick the code cell that holds the pattern, annotate it, collapse it into a Claude skill.
+            (<code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px]">.md</code>),
+            pick the code cell that holds the pattern, annotate it, collapse it into a Claude skill.
             MyST admonitions in nearby markdown cells become draft annotations automatically.
           </p>
         </header>

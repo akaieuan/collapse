@@ -17,9 +17,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Collapse — cross-stack patterns, collapsed into Claude skills",
+  title: "Collapse — a framework for collapsing patterns into Claude artifacts",
   description:
-    "Annotate the same concept across Next.js, Vue, Nuxt, and Qiskit. Each lesson collapses the cross-stack superposition into a Claude Code skill that guardrails AI generation in any of those stacks.",
+    "Turn the patterns you understand into Claude Code skills. Three on-ramps (MDX lessons, Jupyter notebooks, your own ingestor), one template engine, skill files written to ~/.claude/skills/. MCP tool generation is the next output target.",
 };
 
 export default function RootLayout({
