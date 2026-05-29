@@ -79,7 +79,7 @@ export default async function Home() {
             <div className="space-y-1">
               <p className="text-[13.5px] font-medium text-foreground">No concepts yet</p>
               <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-                Drop an MDX file into <code className="rounded bg-background px-1 py-0.5 font-mono text-[11px]">content/concepts/</code> to start authoring.
+                Drop an MDX file into <code className="rounded bg-background px-1 py-0.5 font-mono text-[11px]">examples/concepts/</code> to start authoring.
               </p>
             </div>
           </div>

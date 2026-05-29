@@ -5,7 +5,7 @@ import matter from "gray-matter";
 import { extractLessonCodes } from "./extract";
 import type { Lesson, LessonFrontmatter } from "./types";
 
-const CONTENT_DIR = path.join(process.cwd(), "content", "concepts");
+const CONTENT_DIR = path.join(process.cwd(), "examples", "concepts");
 
 const cache = new Map<string, Lesson>();
 
