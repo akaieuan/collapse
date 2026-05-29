@@ -1,36 +1,53 @@
 # Collapse
 
-> A framework for collapsing the patterns you understand into Claude artifacts.
+**A Claude Code skill-building framework.**
+Next.js 16 + TypeScript — three pluggable ingestors (MDX lessons, Jupyter `.ipynb` / MyST `.md`, and a one-file extension pattern for any source format) feed a typed pipeline that compiles each pattern into a `SKILL.md` and atomically writes it to `~/.claude/skills/`.
 
-![Collapse — concepts index](public/screenshots/01-home.png)
+Collapse exists because Claude's default knowledge is stack-agnostic, but most developers live inside one stack at a time. The same idea — reactive state, lifecycle, error boundaries, circuit composition — lands differently in React, Vue, Nuxt, and Qiskit, and a "generic" answer costs round-trips. Collapsed skills carry your cross-stack vocabulary so Claude reaches for the right idiom on the first try, with trigger phrases derived from your annotations.
 
-## What this is
+The repo ships with 17 cross-stack reference lessons under [`examples/concepts/`](examples/concepts/) and a sample notebook under [`examples/notebooks/`](examples/notebooks/) that exercises the import flow end-to-end. MCP server scaffold generation is the planned second output target — see [docs/roadmap.md](docs/roadmap.md).
 
-Collapse turns annotated source material — a lesson you wrote, a notebook you read, anything you can point an ingestor at — into a Claude Code skill that lives in `~/.claude/skills/`. From the moment that file is written, Claude knows the pattern, with your annotations baked into its trigger phrases.
+---
 
-It's three layers: **ingestors** (MDX, notebooks, your own), a **template engine** that produces the artifact, and a **persistence layer** that writes it to the local filesystem. Skills are the first output target. [MCP tool generation is the second](docs/roadmap.md).
+## Features
 
-Read it as a framework, not an app — the [architecture doc](docs/architecture.md) walks through the layers and what's pluggable. The 17 lessons under [`examples/concepts/`](examples/concepts/) are reference implementations, not the product.
+### Ingestors
 
-## Why collapse patterns across languages
+- **MDX lessons** — annotated code fences with `{lines#id}` metadata linked to sibling `<Note>` JSX blocks, scoped per-stack via `<LangTab lang="...">`. Frontmatter-validated. Cached at module load. Sources read from `examples/concepts/*.mdx`.
+- **Jupyter notebook + MyST chapter import** — `/import` accepts pasted `.ipynb` JSON, uploaded files, or MyST `.md` strings. Parses `cell_type ∈ { code, markdown }`, coerces `source: string | string[]` correctly, infers kernel language from `metadata.kernelspec`. Extracts MyST admonitions (`:::{note}`, `:::{warning}`, `:::{important}`, `:::{tip}`) from adjacent markdown cells for automatic annotation prefill.
+- **Pluggable extension model** — any source format ships in ~4 files following the `lib/notebook/` template: `types.ts`, `parse-*.ts`, optional extractors, `to-annotation-input.ts`. Worked example in [docs/build-your-own-ingestor.md](docs/build-your-own-ingestor.md).
 
-Most of us live in one stack day-to-day. Mine is Next.js. Yours might be Vue, or Nuxt, or you're deep in Qiskit notebooks. The moment you switch — new job, side project, a teammate's codebase, a research direction — your default tool becomes a fresh learner. You're back to *"what's the Vue equivalent of `useState`?"* hand-waving, and Claude answers with generic syntax that doesn't match your existing instincts.
+### Template engine
 
-Cross-language artifacts fix that asymmetry. When you collapse one pattern across multiple stacks, five things happen:
+- **Two entry points** — `generateAnnotationSkillDraft(input)` (one annotation → one skill) and `generateSkillDraft(lesson)` (whole lesson → one skill), both in `lib/skill-template.ts`.
+- **Description composition** — auto-generates Claude trigger phrases from annotation `tip`, `remember`, and lesson title; packs ≤5 per skill.
+- **Cross-language equivalents** — populated automatically from sibling `<LangTab>` blocks; reduces stack-mismatch round-trips.
+- **Frontmatter rendering** — `renderSkillFile(draft)` emits YAML-frontmatter markdown via `js-yaml`; `lineWidth: -1` to keep descriptions unwrapped.
+- **Skill quality linter** — `lib/skill-quality.ts` returns one of `clean | info | warn` based on description length, trigger-phrase ambiguity, missing kebab-case names, and oversized bodies. Surfaced as colored dots in `/skills`.
 
-**1. You learn what's actually different.** Writing the Vue version after the Next version forces you to see *where* the languages diverge — not "`useState` ≈ `ref`" but: `ref` is pull-based, mutates `.value` in place, and the wrapper itself is the dependency edge. That's a distinction you only feel by writing both side-by-side. The lesson captures it. The skill carries it forward.
+### Persistence
 
-**2. Claude carries the translation.** The generated `SKILL.md` has a `Cross-language equivalents` section pulled from your other `<LangTab>`s. When you ask Claude *"how do I do reactive state in Nuxt"* in a Vue project, it loads the Vue skill, sees the Nuxt equivalent inline, and reaches into both at once. You skip the "Vue version, but Nuxt-flavored" round-trip.
+- **Local atomic writes** — `POST /api/skills` uses `.tmp + rename` for crash safety. Zod-validated payloads. Path traversal rejected (any `name` escaping `~/.claude/skills/` returns 400). Collision returns 409 with the existing description for diff context; no auto-suffix.
+- **Read-back UI** — `/skills` reads `~/.claude/skills/` directly via `node:fs`, sorted by `mtimeMs` descending, with quality verdicts and `(size / 1024).toFixed(1) KB` per skill.
+- **No telemetry. No cloud. No database.** The filesystem is the storage layer.
 
-**3. The library compounds.** Every new lesson can cite the ones beneath it. Once you have `vue-ref-computed`, authoring `vue-watch-effect` is faster because the trigger phrases inherit and the recipe builds on a primitive Claude already knows. Your `~/.claude/skills/` directory becomes a *vocabulary*, not a pile of disconnected files.
+### Lesson UI
 
-**4. Polyglot teams stop being islands.** A `SKILL.md` is just a plain markdown file with kebab-case frontmatter. Ship them via a shared dotfiles repo or a private gist; teammates drop them into their own `~/.claude/skills/`. A Next dev opening a Vue file gets answers shaped like *their* mental model — with the translation key inline.
+- **Shiki syntax highlighting** with a custom annotation transformer that wraps annotated lines in `<span class="annot" data-annot-id>` for hover/click reveal.
+- **Color-coded annotation kinds** — `core | note | gotcha | mistake | mnemonic | cross`, each with a calibrated OKLCH background + dashed-to-solid border state for pinned notes.
+- **Cross-stack grid view** — `/concepts/{slug}/grid` stacks all `<LangTab>`s side-by-side for direct comparison.
+- **Subtle motion on import stages** — `motion/react` (formerly framer-motion), `duration: 0.2`. Sparing by design.
 
-**5. Switching cost approaches zero.** You're not relearning Vue from scratch when you switch — you're learning where Vue and React *diverge*. Cross-stack collapsing makes that divergence the explicit unit of learning, instead of relearning the whole stack each time.
+---
 
-This is the actual leverage. The MDX authoring, the notebook import, the skill quality linter — all of that is plumbing in service of the same outcome: a personal library that closes the cost of moving between languages.
+## Requirements
 
-## Quickstart
+- macOS, Linux, or Windows
+- Node 20+
+- pnpm 10+ — `corepack enable` or `npm i -g pnpm`
+- Claude Code installed and configured (skills are loaded from `~/.claude/skills/` on session start)
+
+## Quick start
 
 ```bash
 git clone https://github.com/akaieuan/collapse.git
@@ -39,91 +56,147 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Click a lesson under **Concepts**, click **Collapse**, watch the toast: `Collapsed → ~/.claude/skills/{name}/SKILL.md`. Open a new Claude Code session and the pattern is loaded.
+Open [http://localhost:3000](http://localhost:3000):
 
-## Three on-ramps
+1. Browse the lessons under **Concepts**.
+2. Open `quantum-audio-encoding`, hover an annotated token to reveal the note.
+3. Click **Collapse** in the toolbar — `~/.claude/skills/{name}/SKILL.md` is written, toast confirms the path.
+4. Open a new Claude Code session — the skill loads automatically; ask about the pattern.
 
-### 1 — Author the lesson (MDX)
+For the notebook on-ramp, drop [`examples/notebooks/bell-pair-preparation.ipynb`](examples/notebooks/bell-pair-preparation.ipynb) into `/import`.
 
-![Annotated lesson page with a pinned note](public/screenshots/03-lesson.png)
-
-The default ingestor reads `examples/concepts/*.mdx`. Authoring API:
-
-- **Code fence with annotation metadata** — `{lines#id}` after the language tag.
-- **Sibling `<Note>` JSX blocks** — link an `id` to a `tip` + body + `kind` (`core`, `note`, `gotcha`, `mistake`, `mnemonic`, `cross`).
-- **`<LangTab lang="...">` wrapper** — scope code + notes to one stack so a single lesson can express the same pattern in Next, Vue, Nuxt, and Qiskit.
-
-The grid view stacks all four stacks for side-by-side comparison — which is where the cross-language vocabulary gets built.
-
-![Reactivity model — Next.js and Vue side-by-side in the grid view](public/screenshots/06-lesson-grid-vue.png)
-
-### 2 — Import a notebook (.ipynb / MyST .md)
-
-![Import flow — parsed Qiskit notebook with admonition prefill](public/screenshots/04-import.png)
-
-For patterns that live in someone else's notebook — the [Qiskit textbook](https://github.com/Qiskit/textbook), research notebooks, anything from the [Executable Books](https://executablebooks.org) ecosystem — drop a `.ipynb` or MyST `.md` into `/import`, pick the code cell, annotate, collapse.
-
-MyST admonitions (`:::{note}`, `:::{warning}`, `:::{important}`) in nearby markdown cells **pre-fill the annotation form automatically** — `important` → core, `warning` → gotcha, `tip` → note. The notebook stays ephemeral; only the skill persists.
-
-Try it with [`examples/notebooks/bell-pair-preparation.ipynb`](examples/notebooks/bell-pair-preparation.ipynb).
-
-### 3 — Your own ingestor
-
-`lib/notebook/` is a template, not a special case. The pattern is four files:
-
-```
-lib/<your-source>/
-  types.ts                    ParsedThing[] shape
-  parse-<format>.ts           string → ParsedThing[]
-  to-annotation-input.ts      ParsedThing + user input → AnnotationSkillInput
-  extract-*.ts (optional)     prose prefilling logic
-```
-
-[**docs/build-your-own-ingestor.md**](docs/build-your-own-ingestor.md) walks through it with a worked blog-post example: ~250 LOC for an ingestor + ~150 LOC of vitest. The template engine, persistence, frontmatter handling, collision detection — none of that is your code. You produce an `AnnotationSkillInput`; Collapse handles the rest.
-
-## What gets written
-
-```yaml
----
-name: vue-ref-computed
-description: "Vue core concept: ref() boxes a primitive so Vue can
-  track reassignment. Use whenever the user is writing Vue code that
-  touches local reactive state. Trigger phrases: 'ref() boxes a
-  primitive…', 'pull-based reactivity', 'vue ref computed'."
 ---
 
-# Vue: ref() boxes a primitive so Vue can track reassignment
+## Architecture
 
-…
+Three-layer pipeline. Each boundary is a TypeScript interface; no layer reaches into another.
+
+```
+┌─────────────────┐   ┌────────────────────────┐   ┌───────────────┐
+│  ingestor       │──▶│  template engine       │──▶│  persistence  │
+│  (the on-ramps) │   │  lib/skill-template    │   │  /api/skills  │
+└─────────────────┘   └────────────────────────┘   └───────────────┘
+   MDX lessons          generateAnnotation-           ~/.claude/
+   .ipynb                 SkillDraft()                  skills/
+   MyST .md              generateSkillDraft()           {name}/
+   your own ▲            renderSkillFile()              SKILL.md
+                                                          │
+                                                          ▼
+                                                   (roadmap: MCP server
+                                                    scaffold output)
 ```
 
-Full anatomy in [docs/skill-md-spec.md](docs/skill-md-spec.md).
+**Type-safe by construction:** ingestors produce `AnnotationSkillInput`, the template engine consumes it without knowing the source format, and persistence consumes a validated `SkillDraft`. Adding a new ingestor doesn't touch the engine. Adding a second output target (MCP server scaffold) doesn't touch the ingestors.
 
-## Skills directory
+**Stateless:** no database, no runtime config, no global state. The skills directory IS the state — read directly on every request.
 
-![Skills page showing ~/.claude/skills/](public/screenshots/05-skills.png)
+**Atomic:** writes go to `{file}.tmp` then `fs.rename()` into place, so concurrent or interrupted writes never produce a partial `SKILL.md`.
 
-`/skills` reads `~/.claude/skills/` directly. Quality verdicts (`clean` / `info` / `warn`) come from a local linter so you can see which skills carry their weight at a glance. Edit any in a text editor. Delete with `rm`. Copy somewhere to share.
+### Source layout
+
+```
+app/
+├── api/skills/route.ts            POST handler (Zod, atomic write, 409)
+├── api/skills/draft/route.ts      Lesson → draft preview endpoint
+├── concepts/[slug]/               MDX lesson viewer (tabs view)
+├── concepts/[slug]/grid/          Cross-stack grid view
+├── import/                        Notebook import flow
+├── skills/                        ~/.claude/skills/ directory viewer
+├── layout.tsx                     Root layout (theme, fonts, nav)
+└── page.tsx                       Concepts index
+
+lib/
+├── lessons/                       MDX ingestor (loader, extract, types)
+├── notebook/                      .ipynb + MyST ingestor (parsers, admonition
+│                                  extractor, adapter)
+├── shiki/                         Syntax highlighting + annotation transformer
+├── skill-template.ts              Template engine — draft generation, frontmatter
+├── skill-quality.ts               Skill linter (clean | info | warn)
+└── skill-body.ts                  Body composition helpers
+
+examples/
+├── concepts/                      17 cross-stack reference MDX lessons
+└── notebooks/                     Sample .ipynb for the import flow
+
+docs/
+├── architecture.md                Full version of this section
+├── build-your-own-ingestor.md     Worked example for new source formats
+├── skill-md-spec.md               SKILL.md format reference
+└── roadmap.md                     MCP track + non-goals
+
+scripts/
+└── screenshot.mjs                 Playwright-based README screenshot pipeline
+```
+
+## Tech stack
+
+| | |
+|---|---|
+| Language | TypeScript 5 |
+| Framework | Next.js 16 (App Router, RSC), Turbopack dev server |
+| UI | Tailwind v4 (CSS-first config), shadcn/ui (Nova preset, Base UI under the hood), Geist Sans/Mono |
+| MDX | `next-mdx-remote-client`, `remark-mdx`, `@shikijs/rehype` with a custom annotation transformer |
+| State | React 19 server components; no client state library |
+| Motion | `motion` (formerly framer-motion) — used sparingly for stage transitions |
+| Validation | Zod 4 on all API surfaces |
+| Test | Vitest (39 tests across parsers, extractors, and templates) |
+| Tooling | Playwright (screenshot capture), pnpm 10 workspaces |
+| Runtime | Node 20+, local filesystem persistence |
+
+## Why collapse patterns across languages
+
+The leverage isn't "I have skills" — it's "I have skills that move with me when I switch stacks." Five things happen when one pattern lives across multiple `<LangTab>`s:
+
+1. **You learn what's actually different.** Writing the Vue version after the React version forces you to see *where* the languages diverge — `ref` is pull-based, mutates `.value` in place, the wrapper itself is the dependency edge. A distinction you only feel by writing both side-by-side. The lesson captures it.
+2. **Claude carries the translation.** Cross-language equivalents in the generated `SKILL.md` are pulled from your other `<LangTab>`s. Asking *"how do I do reactive state in Nuxt"* in a Vue project loads the Vue skill, sees the Nuxt equivalent inline, and answers correctly first try.
+3. **The library compounds.** `vue-watch-effect` cites `vue-ref-computed`. Trigger phrases inherit. The skills directory becomes a *vocabulary*, not a pile of files.
+4. **Polyglot teams stop being islands.** A `SKILL.md` is a plain markdown file with kebab-case frontmatter. Ship via dotfiles or a private gist; teammates drop them in. A Next dev opening a Vue file gets answers shaped like *their* mental model with the translation key inline.
+5. **Switching cost approaches zero.** You're not relearning Vue from scratch — you're learning where Vue and React *diverge*. Cross-stack collapse makes that divergence the explicit unit of learning.
+
+---
+
+## Status
+
+Active development.
+
+- ✅ MDX ingestor with `<LangTab>` / `<Note>` model, 17 reference lessons
+- ✅ Notebook ingestor (`.ipynb` + MyST `.md`) with admonition auto-prefill
+- ✅ Template engine with cross-language equivalents and trigger-phrase derivation
+- ✅ Persistence layer with atomic writes, 409 collision handling
+- ✅ Skill quality linter with three-tier verdicts
+- ✅ Lesson UI (tabs + grid views), import UI (3-stage flow), skills directory viewer
+- ✅ Vitest suite (39/39 green), typecheck clean, Playwright screenshot pipeline
+- 🚧 MCP server scaffold output — second persistence target sharing the template-engine layer (see [docs/roadmap.md](docs/roadmap.md))
+- 🚧 Multi-cell notebook composition
+- 🚧 MyST chapter URL fetcher
+
+---
 
 ## Docs
 
 - [**Architecture**](docs/architecture.md) — the three layers and what's pluggable
 - [**Build your own ingestor**](docs/build-your-own-ingestor.md) — worked example for any source format
 - [**SKILL.md spec**](docs/skill-md-spec.md) — what Collapse generates, what Claude reads
-- [**Roadmap**](docs/roadmap.md) — MCP tool generation, multi-cell composition, and what we're explicitly *not* building
+- [**Roadmap**](docs/roadmap.md) — MCP tool generation track + non-goals
 
-## Examples
+## Screenshots
 
-17 cross-stack lessons under [`examples/concepts/`](examples/concepts/) cover React hooks, Vue composables, Nuxt patterns, Qiskit primitives. One sample notebook under [`examples/notebooks/`](examples/notebooks/) demos the import flow end-to-end.
+![Concepts index](public/screenshots/01-home.png)
 
-## Roadmap
+![Cross-stack grid view — Quantum audio encoding](public/screenshots/02-lesson-grid.png)
 
-Next major target: **MCP tool generation** as a second output type, sitting alongside skills in `~/.claude/`. The architecture supports it — see [docs/roadmap.md](docs/roadmap.md).
+![Annotated lesson page with pinned note](public/screenshots/03-lesson.png)
 
-## Stack
+![Notebook import flow with admonition prefill](public/screenshots/04-import.png)
 
-Next.js 16 (App Router, RSC) · Tailwind v4 · shadcn/ui (Nova preset) · MDX · Shiki · Geist · TypeScript · Vitest · Playwright
+![~/.claude/skills/ directory viewer](public/screenshots/05-skills.png)
+
+![Reactivity model — Next.js and Vue side-by-side](public/screenshots/06-lesson-grid-vue.png)
 
 ---
 
-Built by [Ieuan King](https://ubik.studio).
+## Credits
+
+Built by [ubik.studio](https://ubik.studio). Powered by [Claude Code](https://claude.com/claude-code).
+
+© 2026 ubik.studio.
