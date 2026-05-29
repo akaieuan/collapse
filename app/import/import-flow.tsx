@@ -129,6 +129,22 @@ export function ImportFlow() {
       .catch(() => toast.error("Failed to read file"));
   }
 
+  async function loadSample() {
+    try {
+      const res = await fetch("/api/examples/notebook");
+      if (!res.ok) {
+        toast.error("Failed to load sample notebook");
+        return;
+      }
+      const text = await res.text();
+      setRaw(text);
+      setSourceType("ipynb");
+      toast.success("Loaded sample notebook — hit Parse");
+    } catch {
+      toast.error("Failed to load sample notebook");
+    }
+  }
+
   function handleParse() {
     setParseError(null);
     setDraft(null);
@@ -291,20 +307,29 @@ export function ImportFlow() {
               className="field-sizing-fixed resize-none font-mono text-[12px] leading-relaxed"
             />
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="inline-flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground hover:text-foreground">
-                <input
-                  type="file"
-                  accept=".ipynb,.md,.json"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleFile(file);
-                  }}
-                  className="hidden"
-                />
-                <span className="rounded-md border border-border/60 px-2 py-1 font-mono text-[11px]">
-                  Upload file
-                </span>
-              </label>
+              <div className="flex items-center gap-2">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground hover:text-foreground">
+                  <input
+                    type="file"
+                    accept=".ipynb,.md,.json"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFile(file);
+                    }}
+                    className="hidden"
+                  />
+                  <span className="rounded-md border border-border/60 px-2 py-1 font-mono text-[11px]">
+                    Upload file
+                  </span>
+                </label>
+                <button
+                  type="button"
+                  onClick={loadSample}
+                  className="rounded-md border border-border/60 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+                >
+                  Try sample
+                </button>
+              </div>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" onClick={resetAll} size="sm">
                   Reset

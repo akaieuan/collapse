@@ -81,17 +81,20 @@ export default async function SkillsPage() {
             <span className="text-foreground/85">{skills.length}</span> total
           </span>
           <span aria-hidden className="text-muted-foreground/40">·</span>
-          <span className="inline-flex items-center gap-1 tabular-nums">
+          <span className="inline-flex items-center gap-1.5 tabular-nums">
             <QualityDot verdict="clean" />
-            {cleanTotal}
+            <span>{cleanTotal}</span>
+            <span className="text-muted-foreground/55">clean</span>
           </span>
-          <span className="inline-flex items-center gap-1 tabular-nums">
+          <span className="inline-flex items-center gap-1.5 tabular-nums">
             <QualityDot verdict="info" />
-            {infoTotal}
+            <span>{infoTotal}</span>
+            <span className="text-muted-foreground/55">info</span>
           </span>
-          <span className="inline-flex items-center gap-1 tabular-nums">
+          <span className="inline-flex items-center gap-1.5 tabular-nums">
             <QualityDot verdict="warn" />
-            {warnTotal}
+            <span>{warnTotal}</span>
+            <span className="text-muted-foreground/55">warn</span>
           </span>
           <code className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/90">
             ~/.claude/skills/
