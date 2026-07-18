@@ -6,9 +6,11 @@
  *   - apply   : "Run the user's prompt through Claude with this skill loaded as if Claude Code injected it."
  *   - sharpen : "Critique this skill description and propose a sharper version." (JSON output)
  *
- * Model defaults follow the claude-api skill's guidance:
- *   - Opus 4.7 for `apply` (matches what Claude Code actually runs, gives realistic output)
- *   - Haiku 4.5 for `trigger` and `sharpen` (routing/critique — cheap + fast is the right tier)
+ * Model: all three flows target `claude-opus-4-8`, the current Opus. `apply` matches what
+ * Claude Code actually runs, giving realistic output; `trigger` and `sharpen` run the same
+ * model for parity. No sampling params (temperature/top_p are rejected on current Opus);
+ * `apply` uses adaptive thinking + effort. The JSON flows constrain output with
+ * `output_config.format` (structured outputs), which Opus 4.8 supports.
  *
  * Prompt caching: the system prompts are static across calls; cache them at the breakpoint.
  */
@@ -64,7 +66,7 @@ export async function evaluateTrigger(args: {
 }): Promise<TriggerResult> {
   const client = getClient();
   const response = await client.messages.create({
-    model: "claude-haiku-4-5",
+    model: "claude-opus-4-8",
     max_tokens: 512,
     system: [
       {
@@ -127,7 +129,7 @@ export async function applySkill(args: {
 }): Promise<ApplyResult> {
   const client = getClient();
   const response = await client.messages.create({
-    model: "claude-opus-4-7",
+    model: "claude-opus-4-8",
     max_tokens: 1500,
     thinking: { type: "adaptive" },
     output_config: { effort: "medium" },
@@ -177,7 +179,7 @@ export async function sharpenDescription(args: {
 }): Promise<SharpenResult> {
   const client = getClient();
   const response = await client.messages.create({
-    model: "claude-haiku-4-5",
+    model: "claude-opus-4-8",
     max_tokens: 800,
     system: [
       {
