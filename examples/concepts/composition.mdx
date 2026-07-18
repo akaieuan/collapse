@@ -1,13 +1,12 @@
 ---
 slug: composition
 title: Composition primitives
-summary: How each ecosystem extracts and reuses logic — custom hooks, composables, auto-imports, and circuit composition.
+summary: How each ecosystem extracts and reuses logic — custom hooks, composables, auto-imports, and cross-framework composition.
 category: Foundations
 languages:
   - next
   - vue
   - nuxt
-  - qiskit
 primary: vue
 ---
 
@@ -122,42 +121,6 @@ Nuxt scans `composables/` and auto-imports every export. The folder name is the 
 
 <Note id="auto-import-call" tip="Call composables anywhere — no import line">
 Nuxt's auto-import is double-edged: ergonomic, but it makes the dependency graph implicit. To follow what `useCounter` actually does, you have to remember the folder convention.
-</Note>
-
-</LangTab>
-
-<LangTab lang="qiskit">
-
-```python {1-7#bell-fn 9-12#combine 14-17#use} title="composition.py"
-from qiskit import QuantumCircuit
-
-def bell_pair() -> QuantumCircuit:
-    qc = QuantumCircuit(2)
-    qc.h(0)
-    qc.cx(0, 1)
-    return qc
-
-def add_measurement(qc: QuantumCircuit) -> QuantumCircuit:
-    measured = qc.copy()
-    measured.measure_all()
-    return measured
-
-main = QuantumCircuit(4, 4)
-main.compose(bell_pair(), qubits=[0, 1], inplace=True)
-main.compose(bell_pair(), qubits=[2, 3], inplace=True)
-main = add_measurement(main)
-```
-
-<Note id="bell-fn" tip="A function that returns a QuantumCircuit is a 'composable'">
-The Qiskit equivalent of a custom hook: a pure builder function. It has no side effects on global state — it returns a new circuit you can compose into a larger one.
-</Note>
-
-<Note id="combine" tip="Don't mutate the input — copy and modify">
-A bug class familiar to React devs: `qc.measure_all()` mutates in place. Returning `qc.copy()` after modification keeps the function pure and lets the caller decide.
-</Note>
-
-<Note id="use" tip="compose() embeds a smaller circuit into a larger one">
-`compose(other, qubits=[0, 1])` is the analog of "calling the composable". You wire your local qubits to its qubits the way you'd wire a custom hook's outputs to your component's state.
 </Note>
 
 </LangTab>

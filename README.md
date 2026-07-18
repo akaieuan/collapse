@@ -5,9 +5,15 @@ Part of [akaOSS](https://www.akaoss.dev/projects/collapse) — https://www.akaos
 **A Claude Code skill-building framework.**
 Next.js 16 + TypeScript — three pluggable ingestors (MDX lessons, Jupyter `.ipynb` / MyST `.md`, and a one-file extension pattern for any source format) feed a typed pipeline that compiles each pattern into a `SKILL.md` and atomically writes it to `~/.claude/skills/`.
 
-Collapse exists because Claude's default knowledge is stack-agnostic, but most developers live inside one stack at a time. The same idea — reactive state, lifecycle, error boundaries, circuit composition — lands differently in React, Vue, Nuxt, and Qiskit, and a "generic" answer costs round-trips. Collapsed skills carry your cross-stack vocabulary so Claude reaches for the right idiom on the first try, with trigger phrases derived from your annotations.
+Collapse exists because Claude's default knowledge is stack-agnostic, but most developers live inside one stack at a time. The same idea — reactive state, lifecycle, error boundaries, data fetching — lands differently in React, Vue, and Nuxt, and a "generic" answer costs round-trips. Collapsed skills carry your cross-stack vocabulary so Claude reaches for the right idiom on the first try, with trigger phrases derived from your annotations.
 
-The repo ships with 26 cross-stack reference lessons under [`examples/concepts/`](examples/concepts/) and a sample notebook under [`examples/notebooks/`](examples/notebooks/) that exercises the import flow end-to-end. MCP server scaffold generation is the planned second output target — see [docs/roadmap.md](docs/roadmap.md).
+The repo ships with 21 cross-stack reference lessons under [`examples/concepts/`](examples/concepts/), organized as three **example families** so no single domain is the point:
+
+- **Web frameworks** — React/Next.js, Vue, Nuxt (reactive state, side effects, composition, two-way binding, loading/empty/error states…)
+- **Tooling patterns** — structured tagging, information density, progressive import fallback, HITL annotation…
+- **Side-effectful set** — the honest MCP target: scaffold a route, run a shell task, write a file atomically.
+
+A general **React-hooks** sample notebook under [`examples/notebooks/`](examples/notebooks/) exercises the import flow end-to-end. Collapse compiles any lesson or notebook to a `SKILL.md` — and, **new in v0.2**, to an [MCP server scaffold](docs/roadmap.md) that exposes the pattern as an invocable tool.
 
 ---
 
@@ -60,12 +66,12 @@ pnpm dev
 
 Open [http://localhost:3000](http://localhost:3000):
 
-1. Browse the lessons under **Concepts**.
-2. Open `quantum-audio-encoding`, hover an annotated token to reveal the note.
-3. Click **Collapse** in the toolbar — `~/.claude/skills/{name}/SKILL.md` is written, toast confirms the path.
-4. Open a new Claude Code session — the skill loads automatically; ask about the pattern.
+1. Browse the lessons under **Concepts** — pick any family (a web-framework lesson like `side-effects`, a tooling pattern like `tag-kit-structured-tagging`, or the side-effectful `scaffold-a-next-route`).
+2. Open a lesson, hover an annotated token to reveal the note.
+3. Click **Collapse** in the toolbar — `~/.claude/skills/{name}/SKILL.md` is written, toast confirms the path. Flip the target toggle to **MCP tool** to emit a server scaffold under `~/.claude/mcp-servers/{name}/` instead.
+4. Open a new Claude Code session — the skill (or MCP tool) loads automatically; ask about the pattern.
 
-For the notebook on-ramp, drop [`examples/notebooks/bell-pair-preparation.ipynb`](examples/notebooks/bell-pair-preparation.ipynb) into `/import`.
+For the notebook on-ramp, hit **/import** and load the sample [`use-debounced-value.ipynb`](examples/notebooks/use-debounced-value.ipynb) React-hooks notebook — or drop in your own.
 
 ---
 
@@ -100,6 +106,7 @@ Three-layer pipeline. Each boundary is a TypeScript interface; no layer reaches 
 app/
 ├── api/skills/route.ts            POST handler (Zod, atomic write, 409)
 ├── api/skills/draft/route.ts      Lesson → draft preview endpoint
+├── api/mcp-servers/route.ts       POST handler → MCP scaffold (mirrors skills)
 ├── concepts/[slug]/               MDX lesson viewer (tabs view)
 ├── concepts/[slug]/grid/          Cross-stack grid view
 ├── import/                        Notebook import flow
@@ -113,12 +120,13 @@ lib/
 │                                  extractor, adapter)
 ├── shiki/                         Syntax highlighting + annotation transformer
 ├── skill-template.ts              Template engine — draft generation, frontmatter
+├── mcp-template.ts                MCP scaffold engine — second output target
 ├── skill-quality.ts               Skill linter (clean | info | warn)
 └── skill-body.ts                  Body composition helpers
 
 examples/
-├── concepts/                      26 cross-stack reference MDX lessons
-└── notebooks/                     Sample .ipynb for the import flow
+├── concepts/                      21 cross-stack reference MDX lessons (3 families)
+└── notebooks/                     Sample .ipynb (React-hooks import demo)
 
 docs/
 ├── architecture.md                Full version of this section
@@ -141,7 +149,7 @@ scripts/
 | State | React 19 server components; no client state library |
 | Motion | `motion` (formerly framer-motion) — used sparingly for stage transitions |
 | Validation | Zod 4 on all API surfaces |
-| Test | Vitest (39 tests across parsers and extractors) |
+| Test | Vitest (99 tests: parsers, extractors, template engines, API routes) + Playwright e2e |
 | Tooling | Playwright (screenshot capture), pnpm 10 workspaces |
 | Runtime | Node 20+, local filesystem persistence |
 
@@ -161,14 +169,13 @@ The leverage isn't "I have skills" — it's "I have skills that move with me whe
 
 Active development.
 
-- ✅ MDX ingestor with `<LangTab>` / `<Note>` model, 26 reference lessons
+- ✅ MDX ingestor with `<LangTab>` / `<Note>` model, 21 reference lessons across three families
 - ✅ Notebook ingestor (`.ipynb` + MyST `.md`) with admonition auto-prefill
 - ✅ Template engine with cross-language equivalents and trigger-phrase derivation
 - ✅ Persistence layer with atomic writes, 409 collision handling
 - ✅ Skill quality linter with three-tier verdicts
 - ✅ Lesson UI (tabs + grid views), import UI (3-stage flow), skills directory viewer
-- ✅ Vitest suite (39/39 green), typecheck clean, Playwright screenshot pipeline
-- 🚧 MCP server scaffold output — second persistence target sharing the template-engine layer (see [docs/roadmap.md](docs/roadmap.md))
+- ✅ **MCP server scaffold output (v0.2)** — second output target sharing the template-engine layer; the Collapse dialog gains a **skill | MCP tool** toggle, and generated servers handshake over stdio (`npx tsx src/index.ts`). See [docs/roadmap.md](docs/roadmap.md)
 - 🚧 Multi-cell notebook composition
 - 🚧 MyST chapter URL fetcher
 
@@ -185,7 +192,7 @@ Active development.
 
 ![Concepts index](public/screenshots/01-home.png)
 
-![Cross-stack grid view — Quantum audio encoding](public/screenshots/02-lesson-grid.png)
+![Cross-stack grid view — Side effects and data fetching](public/screenshots/02-lesson-grid.png)
 
 ![Annotated lesson page with pinned note](public/screenshots/03-lesson.png)
 

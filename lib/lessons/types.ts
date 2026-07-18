@@ -66,4 +66,6 @@ export type Lesson = {
   codes: LessonCode[];
 };
 
-export const ALL_LANGS: LangKey[] = ["next", "vue", "nuxt", "qiskit"];
+// Target languages offered in the UI picker. `qiskit` remains a valid LangKey in
+// the type system (kept for compatibility) but is no longer a selectable target.
+export const ALL_LANGS: LangKey[] = ["next", "vue", "nuxt"];

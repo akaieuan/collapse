@@ -29,8 +29,8 @@ const PORT = process.env.E2E_PORT || "54981";
 const BASE = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 const OWN_SERVER = !process.env.E2E_BASE_URL;
 
-// The derived skill name for the fixture below (lang `qiskit` + annotation id).
-const EXPECTED_SKILL_NAME = "qiskit-entanglement-is-the-channel";
+// The derived skill name for the fixture below (lang `next` + annotation id).
+const EXPECTED_SKILL_NAME = "next-cleanup-is-the-whole-trick";
 const TARGET_SKILL_FILE = path.join(
   os.homedir(),
   ".claude",
@@ -46,15 +46,15 @@ const NOTEBOOK = JSON.stringify({
     {
       cell_type: "markdown",
       source:
-        ":::{important} Entanglement is the channel\nThe Bell pair is the resource that makes teleportation work.\n:::",
+        ":::{important} Cleanup is the whole trick\nThe returned cleanup clears the pending timer before the next run.\n:::",
     },
     {
       cell_type: "code",
       source:
-        "from qiskit import QuantumCircuit\n\nqc = QuantumCircuit(2, 2)\nqc.h(0)\nqc.cx(0, 1)",
+        'import { useEffect, useState } from "react";\n\nexport function useDebouncedValue(value, delay) {\n  const [d, setD] = useState(value);\n  useEffect(() => {\n    const id = setTimeout(() => setD(value), delay);\n    return () => clearTimeout(id);\n  }, [value, delay]);\n  return d;\n}',
     },
   ],
-  metadata: { kernelspec: { language: "python" } },
+  metadata: { kernelspec: { language: "typescript" } },
 });
 
 function log(msg) {
@@ -145,9 +145,10 @@ async function run() {
     await page.getByRole("button", { name: "Parse", exact: true }).click();
 
     // Stage 2: the cell list renders. Pick the code cell.
+    // The cell row shows the cell's first non-empty line (the import), so match on that.
     const codeCell = page
       .getByRole("button")
-      .filter({ hasText: "from qiskit import QuantumCircuit" });
+      .filter({ hasText: "useEffect" });
     await codeCell.first().waitFor({ timeout: 15_000 });
     await codeCell.first().click();
 
@@ -156,10 +157,10 @@ async function run() {
       .getByText("Pre-filled from a MyST admonition", { exact: false })
       .waitFor({ timeout: 10_000 });
     const tipValue = await page
-      .getByPlaceholder("encode() returns a fresh QuantumCircuit each call")
+      .getByPlaceholder("clearTimeout(id) cancels the pending update")
       .inputValue();
     assert(
-      tipValue === "Entanglement is the channel",
+      tipValue === "Cleanup is the whole trick",
       `expected prefilled tip, got "${tipValue}"`,
     );
     const bodyValue = await page

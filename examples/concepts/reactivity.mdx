@@ -7,14 +7,12 @@ languages:
   - next
   - vue
   - nuxt
-  - qiskit
 primary: vue
-qiskitNote: Qiskit doesn't have reactivity in the JS framework sense — quantum state evolves through gate operations applied imperatively, and you only "observe" the system at measurement time.
 ---
 
 ## The mental shift
 
-React re-runs the whole component function on state change, then diffs and patches the DOM. Vue tracks which DOM nodes depend on which reactive values and updates only those nodes. Nuxt inherits Vue's reactivity but adds SSR-safe primitives. Qiskit has no automatic reactivity — quantum state evolves only through explicit gate application.
+React re-runs the whole component function on state change, then diffs and patches the DOM. Vue tracks which DOM nodes depend on which reactive values and updates only those nodes. Nuxt inherits Vue's reactivity but adds SSR-safe primitives.
 
 <LangTab lang="next">
 
@@ -189,42 +187,6 @@ Nuxt's `useState` (not React's!) is a Vue ref keyed by a string. It serializes b
 
 <Note id="computed-nuxt" kind="gotcha" tip="computed is also auto-imported" remember="Auto-imports are convenient but kill grep. Trade ergonomics for visibility.">
 Nuxt auto-imports every Vue reactivity primitive (`ref`, `computed`, `watch`, `watchEffect`, etc.) plus its own composables (`useFetch`, `useState`, `useRoute`, etc.). The trade-off is reduced grep-ability — no import statement to follow.
-</Note>
-
-</LangTab>
-
-<LangTab lang="qiskit">
-
-```python {3-4#qubits 6-7#gates 9#measure 11-13#run} title="counter.py"
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
-
-qc = QuantumCircuit(2, 2)
-qc.h(0)
-
-qc.cx(0, 1)
-qc.measure([0, 1], [0, 1])
-
-sim = AerSimulator()
-result = sim.run(transpile(qc, sim), shots=1024).result()
-counts = result.get_counts()
-print(counts)
-```
-
-<Note id="qubits" kind="core" tip="A QuantumCircuit is a static description, not a reactive value" remember="Circuit = recipe. State exists only inside the simulator at run time.">
-Unlike a Vue ref or React state, the circuit doesn't hold a "current value" you can read. It's a recipe for operations. The state lives only inside the simulator (or quantum hardware) when the circuit is executed.
-</Note>
-
-<Note id="gates" kind="gotcha" tip="Gates are applied imperatively, in order" remember="qc.h(0) MUTATES qc — no functional 'returns new circuit' API.">
-`qc.h(0)` doesn't return a new circuit — it mutates `qc` in place. Each gate appends to the circuit's instruction list. There's no dependency tracking or "what depends on this qubit" graph.
-</Note>
-
-<Note id="measure" kind="core" tip="Measurement is the only way to read state" remember="No console.log for qubits. Measure or stay in the dark.">
-You can't peek at qubit values mid-circuit the way you'd `console.log(count)`. Measurement collapses the superposition into a classical bit — and that's the only "side effect" the outside world ever sees.
-</Note>
-
-<Note id="run" kind="core" tip="Execution produces a probability distribution, not a single value" remember="Quantum 'state' = a distribution over shots. Not a single value.">
-`shots=1024` runs the circuit 1024 times. `counts` is a dict like `{'00': 512, '11': 512}` — the counter doesn't increment, it samples a quantum distribution. Compare to deterministic `count + 1` in the JS examples.
 </Note>
 
 </LangTab>

@@ -7,14 +7,12 @@ languages:
   - next
   - vue
   - nuxt
-  - qiskit
 primary: nuxt
-qiskitNote: Side effects in the JS sense don't apply — Qiskit programs are batch-style. The closest analog is "register a callback to run after a job completes."
 ---
 
 ## What "side effect" means in each world
 
-In React, a side effect runs after the function output is committed to the DOM. In Vue, it runs whenever a tracked dependency changes. In Nuxt, the same Vue model applies, plus first-class data fetching that handles SSR. In Qiskit, "side effect" doesn't really apply at the framework level — circuits run as a single job.
+In React, a side effect runs after the function output is committed to the DOM. In Vue, it runs whenever a tracked dependency changes. In Nuxt, the same Vue model applies, plus first-class data fetching that handles SSR.
 
 <LangTab lang="next">
 
@@ -152,50 +150,6 @@ When you pass a `() => string` instead of a string, useFetch tracks the function
 
 <Note id="async-data" tip="useAsyncData is the lower-level primitive">
 Use when you need to fetch from somewhere other than an HTTP endpoint, or compose multiple data sources into one cache entry. `useFetch` is sugar over `useAsyncData` with `$fetch`.
-</Note>
-
-</LangTab>
-
-<LangTab lang="qiskit">
-
-```python {1-3#imports 5-10#circuit 12-15#submit 17-22#callback-style} title="async_job.py"
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
-from qiskit.providers import JobStatus
-
-qc = QuantumCircuit(2, 2)
-qc.h(0)
-qc.cx(0, 1)
-qc.measure([0, 1], [0, 1])
-
-sim = AerSimulator()
-job = sim.run(transpile(qc, sim), shots=1024)
-
-print(job.status())
-result = job.result()
-print(result.get_counts())
-
-# On real hardware, jobs are async:
-def on_done(j):
-    print("complete:", j.result().get_counts())
-
-job.add_done_callback(on_done)
-```
-
-<Note id="imports" tip="No reactive primitives needed — execution is batch-mode">
-There's no `useEffect` analog because there's nothing changing while you wait. You build a circuit, submit it, and either block on `result()` or register a callback.
-</Note>
-
-<Note id="circuit" tip="Build before submit — no live state">
-This is the key difference from JS frameworks: the circuit is constructed in full before any execution. There's nothing to "react to" during construction.
-</Note>
-
-<Note id="submit" tip="run() returns a job handle">
-The simulator returns a Job object that wraps the asynchronous execution. `.status()` polls; `.result()` blocks until done. This is closer to a Promise than a reactive ref.
-</Note>
-
-<Note id="callback-style" tip="add_done_callback is the only 'side effect' pattern">
-For real quantum hardware where jobs queue for minutes, you register a callback. The closest analog to a useEffect cleanup would be cancelling the job — `job.cancel()`.
 </Note>
 
 </LangTab>

@@ -18,8 +18,8 @@ Here's the shape (see `lib/skill-template.ts`):
 type AnnotationSkillInput = {
   lessonSlug: string;       // kebab-case identifier for the source
   lessonTitle: string;      // human-readable title
-  lang: LangKey;            // "next" | "vue" | "nuxt" | "qiskit"
-  shikiLang: string;        // Shiki lang token: "tsx" | "vue" | "python" …
+  lang: LangKey;            // "next" | "vue" | "nuxt"
+  shikiLang: string;        // Shiki lang token: "tsx" | "vue" | "ts" …
   annotationId: string;     // kebab-case id for this specific annotation
   kind: AnnotationKind;     // "core" | "note" | "gotcha" | "mistake" | "mnemonic" | "cross"
   tip: string;              // one-line "why this matters"
