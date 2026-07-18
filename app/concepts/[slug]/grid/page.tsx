@@ -43,11 +43,11 @@ export default async function GridPage({
       <div className="mx-auto max-w-6xl px-6 pb-24 pt-10">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <Badge variant="secondary" className="mb-3 text-[11px] uppercase tracking-wide">
+            <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
               {lesson.frontmatter.category}
-            </Badge>
-            <h1 className="text-3xl font-semibold tracking-tight">
-              {lesson.frontmatter.title} <span className="text-muted-foreground font-normal">— side-by-side</span>
+            </p>
+            <h1 className="text-2xl font-light tracking-tight md:text-3xl">
+              {lesson.frontmatter.title} <span className="text-muted-foreground">— side-by-side</span>
             </h1>
             {lesson.frontmatter.summary && (
               <p className="mt-2 max-w-2xl text-muted-foreground">{lesson.frontmatter.summary}</p>

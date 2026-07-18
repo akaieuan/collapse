@@ -58,7 +58,7 @@ export function DiffPreview({
     <div>
       <p className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
         Diff preview ·{" "}
-        <span className="text-emerald-600 dark:text-emerald-400">+{stats.added}</span>{" "}
+        <span className="text-success">+{stats.added}</span>{" "}
         <span className="text-destructive">−{stats.removed}</span>
       </p>
       <pre className="max-h-72 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[11px] leading-relaxed">
@@ -73,7 +73,7 @@ export function DiffPreview({
 function DiffLine({ seg }: { seg: { type: "same" | "add" | "del"; text: string } }) {
   if (seg.type === "add") {
     return (
-      <div className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+      <div className="bg-success/10 text-success">
         <span aria-hidden className="mr-2 select-none">+</span>
         {seg.text || " "}
       </div>

@@ -105,7 +105,7 @@ function ConceptCard({
   return (
     <Link
       href={`/concepts/${slug}`}
-      className="group flex h-full flex-col gap-2 rounded-md border border-border bg-card p-3.5 transition-colors hover:border-foreground/25 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+      className="group relative flex h-full flex-col gap-2 overflow-hidden rounded-2xl border border-border/40 bg-card/40 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-1 focus-visible:ring-offset-background"
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-[14px] font-medium leading-snug tracking-tight text-foreground">

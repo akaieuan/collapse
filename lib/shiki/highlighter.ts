@@ -17,8 +17,8 @@ export const SUPPORTED_LANGS = [
 ] as const;
 
 export const THEMES = {
-  light: "github-light",
-  dark: "github-dark",
+  light: "vitesse-light",
+  dark: "vitesse-dark",
 } as const;
 
 export function getHighlighter(): Promise<Highlighter> {
