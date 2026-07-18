@@ -4,7 +4,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { generateMcpScaffold } from "@/lib/mcp-template";
+import { generateMcpScaffold, generateMcpScaffoldFromSkill } from "@/lib/mcp-template";
 import type { AnnotationSkillInput } from "@/lib/skill-template";
 
 export const runtime = "nodejs";
@@ -26,16 +26,30 @@ const AnnotationSkillInputSchema = z.object({
   codeSnippet: z.string().min(1).max(50_000),
 });
 
-const PostSchema = z.object({
-  name: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "kebab-case-only"),
-  input: AnnotationSkillInputSchema,
-  description: z.string().min(1).max(2048).optional(),
-  overwrite: z.boolean().optional(),
-});
+const NameSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "kebab-case-only");
+
+// Two accepted shapes:
+//   { name, input }            — rich AnnotationSkillInput (from /import)
+//   { name, description, body } — a composed skill draft (from the forge dialog),
+//                                 mirroring the /api/skills payload exactly
+const PostSchema = z.union([
+  z.object({
+    name: NameSchema,
+    input: AnnotationSkillInputSchema,
+    description: z.string().min(1).max(2048).optional(),
+    overwrite: z.boolean().optional(),
+  }),
+  z.object({
+    name: NameSchema,
+    description: z.string().min(1).max(2048),
+    body: z.string().min(1).max(50_000),
+    overwrite: z.boolean().optional(),
+  }),
+]);
 
 function localOnly(req: Request): boolean {
   if (process.env.NODE_ENV !== "production") return true;
@@ -89,7 +103,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { name, input, description, overwrite } = parsed.data;
+  const { name, overwrite } = parsed.data;
   const paths = safeServerPath(name);
   if (!paths) {
     return NextResponse.json({ error: "invalid_path" }, { status: 400 });
@@ -101,7 +115,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "server_exists", existing }, { status: 409 });
   }
 
-  const scaffold = generateMcpScaffold(input as AnnotationSkillInput, { name, description });
+  const scaffold =
+    "input" in parsed.data
+      ? generateMcpScaffold(parsed.data.input as AnnotationSkillInput, {
+          name,
+          description: parsed.data.description,
+        })
+      : generateMcpScaffoldFromSkill(
+          { name, description: parsed.data.description, body: parsed.data.body },
+          { name },
+        );
 
   // Atomic-enough multi-file write: materialise the whole tree in a sibling temp
   // dir, then rename the dir into place. A crash mid-write never leaves a partial

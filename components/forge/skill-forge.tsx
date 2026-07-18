@@ -150,6 +150,7 @@ function DraftEditor({ draft }: { draft: ForgeDraft }) {
   const [name, setName] = useState(draft.name);
   const [description, setDescription] = useState(draft.description);
   const [body, setBody] = useState(draft.body);
+  const [target, setTarget] = useState<"skill" | "mcp">("skill");
   const [busy, setBusy] = useState(false);
   const [collision, setCollision] = useState<{ existingDescription?: string } | null>(null);
   const [pendingEdit, setPendingEdit] = useState<{ prevBody: string; prevDescription: string } | null>(null);
@@ -192,11 +193,17 @@ function DraftEditor({ draft }: { draft: ForgeDraft }) {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ description, body }),
           })
-        : await fetch("/api/skills", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name, description, body, overwrite }),
-          });
+        : target === "mcp"
+          ? await fetch("/api/mcp-servers", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ name, description, body, overwrite }),
+            })
+          : await fetch("/api/skills", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ name, description, body, overwrite }),
+            });
       const data = await res.json();
       if (res.status === 409) {
         setCollision({ existingDescription: data?.existing?.description });
@@ -237,6 +244,31 @@ function DraftEditor({ draft }: { draft: ForgeDraft }) {
         </Button>
       </div>
 
+      {!isEdit && (
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Collapse to
+          </Label>
+          <div className="inline-flex rounded-md border border-border/60 bg-muted/30 p-0.5">
+            {(["skill", "mcp"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTarget(t)}
+                className={
+                  "rounded-[5px] px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-[0.08em] transition-colors " +
+                  (t === target
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground")
+                }
+              >
+                {t === "mcp" ? "MCP tool" : "skill"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div>
         <Label htmlFor="forge-name" className="mb-1 block text-[11px] uppercase tracking-wide text-muted-foreground">
           Name (kebab-case)
@@ -249,7 +281,9 @@ function DraftEditor({ draft }: { draft: ForgeDraft }) {
           className="h-7 font-mono text-xs"
         />
         <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-          ~/.claude/skills/{name}/SKILL.md
+          {target === "mcp" && !isEdit
+            ? `~/.claude/mcp-servers/${name}/`
+            : `~/.claude/skills/${name}/SKILL.md`}
         </p>
       </div>
 

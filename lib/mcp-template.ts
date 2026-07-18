@@ -21,6 +21,7 @@ import {
   generateAnnotationSkillDraft,
   slugifyName,
   type AnnotationSkillInput,
+  type SkillDraft,
 } from "./skill-template";
 import { ANNOTATION_KIND_LABEL, LANG_LABELS } from "./lessons/types";
 
@@ -98,11 +99,29 @@ export function generateMcpScaffold(
   // SKILL.md would have carried (code + annotations), no duplicated formatting.
   const draft = generateAnnotationSkillDraft(input);
   const name = opts.name ? slugifyName(opts.name) : draft.name;
-  const toolName = mcpToolName(name);
   const description = opts.description?.trim() || composeToolDescription(input);
-  const patternDoc = draft.body;
-  const register = renderRegister(name);
+  return buildScaffold(name, description, draft.body);
+}
 
+/**
+ * Generate a scaffold from an already-composed skill draft ({name, description,
+ * body}) — the shape the forge dialog holds. Mirrors the skills-route payload so
+ * the same refined draft can collapse to either target. The tool returns the
+ * draft body as its response content.
+ */
+export function generateMcpScaffoldFromSkill(
+  draft: SkillDraft,
+  opts: McpScaffoldOptions = {},
+): McpScaffold {
+  const name = slugifyName(opts.name ?? draft.name);
+  const description = opts.description?.trim() || draft.description;
+  return buildScaffold(name, description, draft.body);
+}
+
+/** Shared file-set builder. Deterministic given (name, description, patternDoc). */
+function buildScaffold(name: string, description: string, patternDoc: string): McpScaffold {
+  const toolName = mcpToolName(name);
+  const register = renderRegister(name);
   const files: McpScaffoldFile[] = [
     { path: "package.json", content: renderPackageJson(name, toolName) },
     { path: "tsconfig.json", content: renderTsconfig() },
@@ -113,7 +132,6 @@ export function generateMcpScaffold(
     { path: "mcp-register.json", content: register },
     { path: "README.md", content: renderReadme({ name, toolName, description, patternDoc }) },
   ];
-
   return { name, toolName, description, files, register };
 }
 
