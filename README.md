@@ -1,11 +1,13 @@
 # Collapse
 
+Part of [akaOSS](https://www.akaoss.dev/projects/collapse) — https://www.akaoss.dev/projects/collapse
+
 **A Claude Code skill-building framework.**
 Next.js 16 + TypeScript — three pluggable ingestors (MDX lessons, Jupyter `.ipynb` / MyST `.md`, and a one-file extension pattern for any source format) feed a typed pipeline that compiles each pattern into a `SKILL.md` and atomically writes it to `~/.claude/skills/`.
 
 Collapse exists because Claude's default knowledge is stack-agnostic, but most developers live inside one stack at a time. The same idea — reactive state, lifecycle, error boundaries, circuit composition — lands differently in React, Vue, Nuxt, and Qiskit, and a "generic" answer costs round-trips. Collapsed skills carry your cross-stack vocabulary so Claude reaches for the right idiom on the first try, with trigger phrases derived from your annotations.
 
-The repo ships with 17 cross-stack reference lessons under [`examples/concepts/`](examples/concepts/) and a sample notebook under [`examples/notebooks/`](examples/notebooks/) that exercises the import flow end-to-end. MCP server scaffold generation is the planned second output target — see [docs/roadmap.md](docs/roadmap.md).
+The repo ships with 26 cross-stack reference lessons under [`examples/concepts/`](examples/concepts/) and a sample notebook under [`examples/notebooks/`](examples/notebooks/) that exercises the import flow end-to-end. MCP server scaffold generation is the planned second output target — see [docs/roadmap.md](docs/roadmap.md).
 
 ---
 
@@ -115,7 +117,7 @@ lib/
 └── skill-body.ts                  Body composition helpers
 
 examples/
-├── concepts/                      17 cross-stack reference MDX lessons
+├── concepts/                      26 cross-stack reference MDX lessons
 └── notebooks/                     Sample .ipynb for the import flow
 
 docs/
@@ -139,7 +141,7 @@ scripts/
 | State | React 19 server components; no client state library |
 | Motion | `motion` (formerly framer-motion) — used sparingly for stage transitions |
 | Validation | Zod 4 on all API surfaces |
-| Test | Vitest (39 tests across parsers, extractors, and templates) |
+| Test | Vitest (39 tests across parsers and extractors) |
 | Tooling | Playwright (screenshot capture), pnpm 10 workspaces |
 | Runtime | Node 20+, local filesystem persistence |
 
@@ -159,7 +161,7 @@ The leverage isn't "I have skills" — it's "I have skills that move with me whe
 
 Active development.
 
-- ✅ MDX ingestor with `<LangTab>` / `<Note>` model, 17 reference lessons
+- ✅ MDX ingestor with `<LangTab>` / `<Note>` model, 26 reference lessons
 - ✅ Notebook ingestor (`.ipynb` + MyST `.md`) with admonition auto-prefill
 - ✅ Template engine with cross-language equivalents and trigger-phrase derivation
 - ✅ Persistence layer with atomic writes, 409 collision handling
