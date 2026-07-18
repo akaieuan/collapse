@@ -85,7 +85,7 @@ export function AnnotationPanel() {
   return (
     <section
       aria-labelledby="annotation-panel-title"
-      className="relative mt-4 overflow-hidden rounded-md border border-border bg-card"
+      className="relative mt-4 overflow-hidden rounded-2xl border border-border/40 bg-card/40"
     >
       <span
         aria-hidden
@@ -484,7 +484,7 @@ function SkillPreview({
         </details>
 
         {collision && (
-          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
+          <div className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
             <p className="font-medium">A skill named &quot;{name}&quot; already exists.</p>
             <div className="mt-2 flex gap-2">
               <button

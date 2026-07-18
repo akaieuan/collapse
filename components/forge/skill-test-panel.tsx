@@ -179,7 +179,7 @@ function ModeChip({
 
 function TriggerCard({ result }: { result: TriggerResult }) {
   const tone = result.triggered
-    ? "border-emerald-500/40 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
+    ? "border-success/40 bg-success/10 text-success"
     : "border-border bg-muted/40 text-foreground/80";
   return (
     <div className={`mt-3 rounded border p-2.5 ${tone}`}>

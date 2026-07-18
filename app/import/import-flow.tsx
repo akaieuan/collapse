@@ -275,7 +275,7 @@ export function ImportFlow() {
     <div className="grid gap-6">
       {/* === Stage 1: input ============================================ */}
       <motion.div {...STAGE_MOTION}>
-        <Card className="gap-0 overflow-hidden p-0">
+        <Card className="gap-0 overflow-hidden rounded-2xl border-border/40 bg-card/40 p-0">
           <div className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-3">
             <div className="space-y-0.5">
               <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -351,7 +351,7 @@ export function ImportFlow() {
       {/* === Stage 2: annotate ========================================= */}
       {parsed ? (
         <motion.div {...STAGE_MOTION}>
-          <Card className="gap-0 overflow-hidden p-0">
+          <Card className="gap-0 overflow-hidden rounded-2xl border-border/40 bg-card/40 p-0">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
               <div className="space-y-0.5">
                 <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -471,7 +471,7 @@ export function ImportFlow() {
       {/* === Stage 3: draft + submit =================================== */}
       {draft ? (
         <motion.div {...STAGE_MOTION}>
-          <Card className="gap-0 overflow-hidden p-0">
+          <Card className="gap-0 overflow-hidden rounded-2xl border-border/40 bg-card/40 p-0">
             <div className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-3">
               <div className="space-y-0.5">
                 <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">

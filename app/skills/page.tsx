@@ -117,7 +117,7 @@ export default async function SkillsPage() {
             </div>
           </div>
         ) : (
-          <ul className="divide-y divide-border/70 rounded-md border border-border bg-card">
+          <ul className="divide-y divide-border/40 overflow-hidden rounded-2xl border border-border/40 bg-card/40">
             {skills.map((s) => (
               <li key={s.dir} className="px-4 py-3 transition-colors duration-150 hover:bg-muted/30">
                 <div className="flex items-start gap-3">

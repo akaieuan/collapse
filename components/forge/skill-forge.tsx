@@ -36,7 +36,7 @@ export function SkillForgeButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="group fixed bottom-6 right-6 z-40 inline-flex h-11 items-center gap-2.5 rounded-full border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-[0_8px_24px_-8px_rgb(0_0_0/0.18)] backdrop-blur transition-all hover:-translate-y-0.5 hover:border-foreground/30 hover:bg-background"
+        className="group fixed bottom-6 right-6 z-40 inline-flex h-11 items-center gap-2.5 rounded-full border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-[0_8px_24px_-8px_oklch(0_0_0/0.18)] backdrop-blur transition-all hover:-translate-y-0.5 hover:border-foreground/30 hover:bg-background"
         aria-label="Open Skill Forge"
       >
         <span className="relative inline-flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-background text-[11px]">
@@ -320,7 +320,7 @@ function DraftEditor({ draft }: { draft: ForgeDraft }) {
       )}
 
       {collision && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
           <p className="font-medium">A skill named &quot;{name}&quot; already exists.</p>
           {collision.existingDescription && (
             <p className="mt-1 line-clamp-2 text-muted-foreground">

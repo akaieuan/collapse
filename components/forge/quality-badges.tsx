@@ -17,7 +17,7 @@ export function QualityBadges({
         const tone =
           i.severity === "warn"
             ? "border-destructive/40 bg-destructive/8 text-destructive"
-            : "border-amber-500/40 bg-amber-500/8 text-amber-700 dark:text-amber-300";
+            : "border-warning/40 bg-warning/10 text-warning";
         const label = i.severity === "warn" ? "warn" : "info";
         return (
           <li
@@ -46,8 +46,8 @@ export function QualityDot({
     verdict === "warn"
       ? "bg-destructive"
       : verdict === "info"
-        ? "bg-amber-500"
-        : "bg-emerald-500/70";
+        ? "bg-warning"
+        : "bg-success/70";
   const dim = size === "md" ? "h-2 w-2" : "h-1.5 w-1.5";
   const label =
     verdict === "warn" ? "Has warnings" : verdict === "info" ? "Has info" : "Clean";
