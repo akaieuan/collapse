@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.95.1
-        version: 0.95.1(zod@4.4.2)
+        specifier: ^0.112.3
+        version: 0.112.3(zod@4.4.2)
       '@base-ui/react':
         specifier: ^1.4.1
         version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -151,8 +151,8 @@ packages:
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
 
-  '@anthropic-ai/sdk@0.95.1':
-    resolution: {integrity: sha512-OO9AF7hmAoU492c/mD7Q2cPqI2WNAj7rAPHlawgBeUgpwiboLRiDs+grsErGWeHHP9ZRWfzq2OVrODTt8aITVg==}
+  '@anthropic-ai/sdk@0.112.3':
+    resolution: {integrity: sha512-wjcozJlitVIuBEw9cj/xBuRznwkhcLmXmNzlFoeHbh4AvrDG3HGZrdvEOTTmobcbhjGkfOpKbmDTCQ4s9LQvCg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -4001,7 +4001,7 @@ snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
 
-  '@anthropic-ai/sdk@0.95.1(zod@4.4.2)':
+  '@anthropic-ai/sdk@0.112.3(zod@4.4.2)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0

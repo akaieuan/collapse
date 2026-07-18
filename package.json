@@ -9,10 +9,11 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "node scripts/e2e/import-flow.e2e.mjs",
     "screenshots": "node scripts/screenshot.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.95.1",
+    "@anthropic-ai/sdk": "^0.112.3",
     "@base-ui/react": "^1.4.1",
     "@shikijs/rehype": "^4.0.2",
     "@shikijs/transformers": "^4.0.2",

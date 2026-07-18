@@ -1,0 +1,35 @@
+---
+slug: write-a-json-file
+title: Write a file atomically
+summary: Persist structured data to disk without ever leaving a half-written file — write to a temp path, then rename into place.
+category: Side effects & tooling
+languages:
+  - next
+primary: next
+---
+
+## Durable writes are a side effect worth encapsulating
+
+A crash mid-write leaves a truncated file that the next reader chokes on. The fix is the same one Collapse itself uses for `SKILL.md`: write to `{file}.tmp`, then `rename` — an atomic operation on a single filesystem. A perfect MCP tool: one durable, side-effectful action behind a clean call.
+
+<LangTab lang="next">
+
+```ts {4-6#atomic 6#rename} title="lib/write-json.ts"
+import { promises as fs } from "node:fs";
+
+export async function writeJson(file: string, data: unknown): Promise<void> {
+  const tmp = file + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fs.rename(tmp, file);
+}
+```
+
+<Note id="atomic" kind="core" tip="Write to a temp file, then rename into place">
+A reader either sees the old file or the fully-written new one — never a partial. `writeFile` can be interrupted and leave garbage; `rename` swaps the inode in one step, so the destination is always whole.
+</Note>
+
+<Note id="rename" kind="mnemonic" tip="rename is atomic on the same filesystem">
+The catch: `rename` is only atomic when source and destination live on the *same* filesystem. Keep the `.tmp` beside its target, not in `/tmp`, or the "rename" silently becomes a copy-then-delete that can tear.
+</Note>
+
+</LangTab>

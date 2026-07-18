@@ -54,7 +54,7 @@ export function Card({ children, header, footer, renderActions }: CardProps) {
 // Consumer — named slots via props
 <Card
   header={<h2>Bell state measurement</h2>}
-  footer={<small className="text-muted">4096 shots</small>}
+  footer={<small className="text-muted">4096 samples</small>}
   renderActions={({ close }) => (
     <>
       <button onClick={close}>Dismiss</button>
@@ -62,7 +62,7 @@ export function Card({ children, header, footer, renderActions }: CardProps) {
     </>
   )}
 >
-  <ProbabilityChart counts={counts} shots={4096} />
+  <DistributionChart counts={counts} samples={4096} />
 </Card>
 
 // Compound component alternative — Card.Header, Card.Body, Card.Footer
@@ -116,12 +116,12 @@ function close() { /* … */ }
 <template>
   <Card>
     <template #header><h2>Bell state measurement</h2></template>
-    <ProbabilityChart :counts="counts" :shots="4096" />
+    <DistributionChart :counts="counts" :samples="4096" />
     <template #actions="{ close }">
       <button @click="close">Dismiss</button>
       <button>Re-run</button>
     </template>
-    <template #footer><small class="muted">4096 shots</small></template>
+    <template #footer><small class="muted">4096 samples</small></template>
   </Card>
 </template>
 ```
@@ -162,7 +162,7 @@ function handleClose() { emit('close') }
 
 <!-- pages/measurement.vue -->
 <script setup lang="ts">
-const { data: result } = await useFetch<{ counts: Record<string, number>; shots: number }>('/api/measurement')
+const { data: result } = await useFetch<{ counts: Record<string, number>; samples: number }>('/api/distribution')
 </script>
 
 <template>
@@ -170,13 +170,13 @@ const { data: result } = await useFetch<{ counts: Record<string, number>; shots:
     <template #header>
       <h2>Bell state measurement</h2>
     </template>
-    <ProbabilityChart v-if="result" :counts="result.counts" :shots="result.shots" />
+    <DistributionChart v-if="result" :counts="result.counts" :samples="result.samples" />
     <template #actions="{ close }">
       <button @click="close">Dismiss</button>
       <button @click="refresh">Re-run</button>
     </template>
     <template #footer>
-      <small class="muted">{{ result?.shots }} shots</small>
+      <small class="muted">{{ result?.samples }} samples</small>
     </template>
   </Card>
 </template>
@@ -186,7 +186,7 @@ const { data: result } = await useFetch<{ counts: Record<string, number>; shots:
 A common pattern in Nuxt component libraries (vue-equipment does this consistently): the wrapper both **emits events** (for the parent to react to) and **provides scoped-slot data** (for the inline content to invoke). The two work together: a button inside the `actions` slot can call `close()`, which is just a function that emits the event. The parent `@close` listener catches it.
 </Note>
 
-<Note id="consumer-page" kind="cross" tip="Same slot pattern as plain Vue + auto-imports remove import noise" remember="Page imports nothing — Card, useFetch, ProbabilityChart all auto-imported. Slot/template syntax identical.">
+<Note id="consumer-page" kind="cross" tip="Same slot pattern as plain Vue + auto-imports remove import noise" remember="Page imports nothing — Card, useFetch, DistributionChart all auto-imported. Slot/template syntax identical.">
 The page consumes the Card with zero import lines. Nuxt auto-imports the component, the composable, the chart, the page directive — everything. The composition logic (template syntax, slot semantics, scoped slot destructuring) is identical to plain Vue. This is the Nuxt win: ergonomic surface, identical semantics.
 </Note>
 

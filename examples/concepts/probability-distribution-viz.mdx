@@ -1,82 +1,34 @@
 ---
 slug: probability-distribution-viz
 title: Probability distribution viz
-summary: Rendering Qiskit measurement counts as an honest visualization — SVG bars proportional to shot frequency, no chart library required. Same data shape, same visual, three framework idioms.
+summary: Rendering a frequency distribution as an honest visualization — SVG bars proportional to each value's share, no chart library required. Same data shape, same visual, three framework idioms.
 category: Cross-stack patterns
 languages:
-  - qiskit
   - next
   - vue
   - nuxt
-primary: qiskit
-qiskitNote: "The data side. The other tabs render the same counts dict — `{bitstring: count}` — in each stack. Designing for quantum means designing for uncertainty; this is the primitive that makes uncertainty legible."
+primary: next
 ---
 
 ## The mental shift
 
-Quantum measurement always returns a distribution, not a value. A 1000-shot run of a Hadamard'd qubit doesn't return `0` or `1` — it returns `{"0": 503, "1": 497}`. The honest design move is to render the distribution as it is: bars whose heights are proportional to shot counts, with the raw numbers visible.
+Many processes return a distribution, not a single value. A 1000-sample A/B test doesn't return "A" or "B" — it returns `{"A": 503, "B": 497}`. The honest design move is to render the distribution as it is: bars whose heights are proportional to sample counts, with the raw numbers visible.
 
-Three rules for designing this primitive at Moth:
+Three rules for designing this primitive:
 
-1. **Don't fake precision.** If a state is in superposition, don't render a single value. Render the distribution.
-2. **Don't hide the shot count.** A 100-shot distribution and a 100,000-shot distribution look identical if you only normalize. Show the absolute counts somewhere — they're the uncertainty signal.
-3. **Pick a stable bar order.** Iteration order of dict keys is not stable across runs in some Python implementations. Sort by bitstring (lexicographic) or by count (descending) — pick one and commit.
+1. **Don't fake precision.** If the underlying data is a distribution, don't collapse it to a single average. Render the distribution.
+2. **Don't hide the sample count.** A 100-sample distribution and a 100,000-sample distribution look identical if you only normalize. Show the absolute counts somewhere — they're the confidence signal.
+3. **Pick a stable bar order.** Iteration order of dict keys is not stable across runs in some implementations. Sort by label (lexicographic) or by count (descending) — pick one and commit.
 
 The data structure is universal: `Record<string, number>` (or `Dict[str, int]` in Python). Every visualization library and every hand-rolled SVG renderer reads the same shape. So the skill is "given this shape, here's how each stack idiomatically renders it."
 
-<LangTab lang="qiskit">
-
-```python {1-7#circuit 9-13#run 15-20#sort 22-26#normalize} title="probability_viz.py — the data side"
-from qiskit import QuantumCircuit
-from qiskit_aer import AerSimulator
-
-qc = QuantumCircuit(2)
-qc.h(0)
-qc.cx(0, 1)
-qc.measure_all()
-
-sim = AerSimulator()
-job = sim.run(qc, shots=4096)
-result = job.result()
-counts: dict[str, int] = result.get_counts()
-# e.g. {'00': 2048, '11': 2048} for a Bell state
-
-# Stable bar order — sort by bitstring lexicographically
-sorted_counts = dict(sorted(counts.items()))
-
-# (Optional) shape conversion for the frontend
-payload = {"counts": sorted_counts, "shots": 4096, "circuit_qubits": qc.num_qubits}
-print(payload)  # → JSON to stdout for a sidecar consumer
-
-# If you want probabilities, normalize. Keep the raw counts in the payload too.
-probabilities = {bitstring: count / 4096 for bitstring, count in sorted_counts.items()}
-```
-
-<Note id="circuit" kind="core" tip="measure_all() adds classical bits AND measure ops in one call — don't forget either" remember="qc.measure_all() = both. Without it, AerSimulator returns empty counts.">
-A circuit without measurements returns `{}` from `get_counts()` — a silent failure that designers see as a blank chart. Always call `measure_all()` (or `measure(qubit, cbit)` for selective measures) before passing the circuit to the simulator. If counts are empty in the frontend, look here first.
-</Note>
-
-<Note id="run" kind="mnemonic" tip="shots is the only knob that matters for visualization fidelity" remember="More shots = smoother distribution. 1024 = noisy. 4096 = typical. 100k+ = research-grade.">
-Shot count determines how cleanly the distribution renders. 1024 shots on a Bell state produces visible noise (you'll see 50-100 spurious counts on `01` and `10`). 4096 cleans it up. 100k makes the distribution look almost analytic. For interactive demos, 4096 is the sweet spot — fast to compute, clean to render.
-</Note>
-
-<Note id="sort" kind="mistake" tip="dict iteration order is preserved in Python 3.7+ but counts dict from Qiskit may not be lex-sorted" remember="Always sort before sending to UI. Counts come back in measurement order, not bitstring order — bars will jitter.">
-Qiskit's `get_counts()` returns bitstrings in whatever order they were first observed. Two runs of the same circuit can have different key order. If you don't sort before serializing, the bars in the UI shift positions between runs — a visual bug masquerading as quantum non-determinism. `sorted(counts.items())` is the fix.
-</Note>
-
-<Note id="normalize" kind="gotcha" tip="Ship BOTH counts and shots — never just probabilities" remember="Payload should include shots so the UI can show '4096 shots' alongside the chart. Probability without shot count is a lie.">
-A probability of 0.503 from 100 shots vs 100k shots tells very different stories. The frontend needs the absolute shot count to render error bars or confidence intervals. Always include `shots` in the payload, even if you also include normalized probabilities — let the UI decide how to communicate uncertainty.
-</Note>
-
-</LangTab>
-
 <LangTab lang="next">
 
-```tsx {1-3#types 5-15#component 17-34#svg 36-40#legend} title="components/ProbabilityChart.tsx"
+```tsx {1-3#types 5-15#component 17-34#svg 36-40#legend} title="components/DistributionChart.tsx"
 type Counts = Record<string, number>;
-type Props = { counts: Counts; shots: number; height?: number };
+type Props = { counts: Counts; samples: number; height?: number };
 
-export function ProbabilityChart({ counts, shots, height = 160 }: Props) {
+export function DistributionChart({ counts, samples, height = 160 }: Props) {
   const entries = Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
   const max = Math.max(...entries.map(([, n]) => n), 1);
   const barWidth = 100 / entries.length;
@@ -89,12 +41,12 @@ export function ProbabilityChart({ counts, shots, height = 160 }: Props) {
         className="w-full"
         style={{ height }}
         role="img"
-        aria-label={`Probability distribution over ${entries.length} outcomes from ${shots} shots`}
+        aria-label={`Probability distribution over ${entries.length} categories from ${samples} samples`}
       >
-        {entries.map(([bitstring, count], i) => {
+        {entries.map(([label, count], i) => {
           const h = (count / max) * (height - 24);
           return (
-            <g key={bitstring}>
+            <g key={label}>
               <rect
                 x={i * barWidth + barWidth * 0.1}
                 y={height - 18 - h}
@@ -110,14 +62,14 @@ export function ProbabilityChart({ counts, shots, height = 160 }: Props) {
                 fill="var(--muted-foreground)"
                 className="font-mono"
               >
-                {bitstring}
+                {label}
               </text>
             </g>
           );
         })}
       </svg>
       <figcaption className="text-xs text-muted-foreground font-mono">
-        {entries.length} outcomes · {shots} shots
+        {entries.length} categories · {samples} samples
       </figcaption>
     </figure>
   );
@@ -133,23 +85,23 @@ This component is intentionally hookless — given the same `counts` prop, it re
 </Note>
 
 <Note id="svg" kind="mnemonic" tip="viewBox + preserveAspectRatio='none' = the chart scales to its container" remember="viewBox 0 0 100 H + preserveAspectRatio='none' = chart fills width responsively. No JS resize observer needed.">
-The chart uses a 100-unit viewbox horizontally so each bar is a percentage. `preserveAspectRatio="none"` lets the SVG stretch to the container width without preserving aspect ratio of the bars — which is what you want for a histogram. No `useResizeObserver`, no measurement effects.
+The chart uses a 100-unit viewbox horizontally so each bar is a percentage. `preserveAspectRatio="none"` lets the SVG stretch to the container width without preserving aspect ratio of the bars — which is what you want for a histogram. No `useResizeObserver`, no layout-measuring effects.
 </Note>
 
-<Note id="legend" kind="gotcha" tip="Always render the shot count in the figcaption — never just bars" remember="figcaption with shots is non-negotiable. 4096 shots and 40 shots look identical without it.">
-The chart visually looks the same whether you ran 40 shots or 4 million. The figcaption is the only thing telling the user how reliable the distribution is. This is the "don't hide the shot count" rule made concrete — it sits in the markup, not in a tooltip.
+<Note id="legend" kind="gotcha" tip="Always render the sample count in the figcaption — never just bars" remember="figcaption with samples is non-negotiable. 4096 samples and 40 samples look identical without it.">
+The chart visually looks the same whether you ran 40 samples or 4 million. The figcaption is the only thing telling the user how reliable the distribution is. This is the "don't hide the sample count" rule made concrete — it sits in the markup, not in a tooltip.
 </Note>
 
 </LangTab>
 
 <LangTab lang="vue">
 
-```vue {1-13#script 15-37#template 39-43#styles} title="components/ProbabilityChart.vue"
+```vue {1-13#script 15-37#template 39-43#styles} title="components/DistributionChart.vue"
 <script setup lang="ts">
 type Counts = Record<string, number>
 const props = withDefaults(defineProps<{
   counts: Counts
-  shots: number
+  samples: number
   height?: number
 }>(), { height: 160 })
 
@@ -166,9 +118,9 @@ const barWidth = computed(() => 100 / entries.value.length)
       preserveAspectRatio="none"
       :style="{ height: `${height}px` }"
       role="img"
-      :aria-label="`Probability distribution over ${entries.length} outcomes from ${shots} shots`"
+      :aria-label="`Probability distribution over ${entries.length} categories from ${samples} samples`"
     >
-      <g v-for="([bitstring, count], i) in entries" :key="bitstring">
+      <g v-for="([label, count], i) in entries" :key="label">
         <rect
           :x="i * barWidth + barWidth * 0.1"
           :y="height - 18 - (count / max) * (height - 24)"
@@ -177,11 +129,11 @@ const barWidth = computed(() => 100 / entries.value.length)
           fill="var(--brand)"
         />
         <text :x="i * barWidth + barWidth / 2" :y="height - 4" text-anchor="middle" font-size="6" fill="var(--muted-foreground)">
-          {{ bitstring }}
+          {{ label }}
         </text>
       </g>
     </svg>
-    <figcaption>{{ entries.length }} outcomes · {{ shots }} shots</figcaption>
+    <figcaption>{{ entries.length }} categories · {{ samples }} samples</figcaption>
   </figure>
 </template>
 
@@ -196,7 +148,7 @@ Vue's `computed` is more explicit than React's "just do it in the function body.
 </Note>
 
 <Note id="template" kind="core" tip="v-for on <g> mirrors React's .map() — but the <g> doesn't need to be the keyed element" remember="v-for with :key on <g>. Vue auto-keys but explicit is better for reorders. Same data → same bars.">
-Vue's `v-for` with `:key="bitstring"` lets the framework efficiently reconcile when counts change — bars that share a bitstring keep their DOM nodes, new bars get fresh nodes. This is the Vue version of React's `key={bitstring}` on the array element. Without keys, Vue (and React) recreate all DOM on every prop change.
+Vue's `v-for` with `:key="label"` lets the framework efficiently reconcile when counts change — bars that share a label keep their DOM nodes, new bars get fresh nodes. This is the Vue version of React's `key={label}` on the array element. Without keys, Vue (and React) recreate all DOM on every prop change.
 </Note>
 
 <Note id="styles" kind="mnemonic" tip="scoped styles + global tokens — the design-tokens pattern in action" remember="Local styles for this component. var(--brand), var(--muted-foreground) from the token layer.">
@@ -207,13 +159,13 @@ This is where the `design-tokens-cross-stack` concept pays off. The bars are fil
 
 <LangTab lang="nuxt">
 
-```vue {1-2#auto-import 4-12#props 15-37#template 40-43#fetch} title="components/ProbabilityChart.vue + pages/run.vue"
-<!-- components/ProbabilityChart.vue — auto-imported as <ProbabilityChart /> -->
+```vue {1-2#auto-import 4-12#props 15-37#template 40-43#fetch} title="components/DistributionChart.vue + pages/run.vue"
+<!-- components/DistributionChart.vue — auto-imported as <DistributionChart /> -->
 <script setup lang="ts">
 type Counts = Record<string, number>
 const props = withDefaults(defineProps<{
   counts: Counts
-  shots: number
+  samples: number
   height?: number
 }>(), { height: 160 })
 
@@ -225,7 +177,7 @@ const barWidth = computed(() => 100 / entries.value.length)
 <template>
   <figure>
     <svg :viewBox="`0 0 100 ${height}`" preserveAspectRatio="none" :style="{ height: `${height}px`, width: '100%' }">
-      <g v-for="([bitstring, count], i) in entries" :key="bitstring">
+      <g v-for="([label, count], i) in entries" :key="label">
         <rect
           :x="i * barWidth + barWidth * 0.1"
           :y="height - 18 - (count / max) * (height - 24)"
@@ -234,23 +186,23 @@ const barWidth = computed(() => 100 / entries.value.length)
           fill="var(--brand)"
         />
         <text :x="i * barWidth + barWidth / 2" :y="height - 4" text-anchor="middle" font-size="6" fill="var(--muted-foreground)">
-          {{ bitstring }}
+          {{ label }}
         </text>
       </g>
     </svg>
-    <figcaption>{{ entries.length }} outcomes · {{ shots }} shots</figcaption>
+    <figcaption>{{ entries.length }} categories · {{ samples }} samples</figcaption>
   </figure>
 </template>
 
 <!-- pages/run.vue — consuming the chart with live data -->
 <script setup lang="ts">
-const { data, pending, refresh } = await useFetch<{ counts: Record<string, number>; shots: number }>('/api/run-circuit')
+const { data, pending, refresh } = await useFetch<{ counts: Record<string, number>; samples: number }>('/api/distribution')
 </script>
 
 <template>
   <div>
-    <button @click="refresh()" :disabled="pending">Run circuit</button>
-    <ProbabilityChart v-if="data" :counts="data.counts" :shots="data.shots" />
+    <button @click="refresh()" :disabled="pending">Refresh</button>
+    <DistributionChart v-if="data" :counts="data.counts" :samples="data.samples" />
   </div>
 </template>
 ```
@@ -267,8 +219,8 @@ This is the cleanest way to declare props with optional values and defaults in V
 This is the cross-stack invariant made visible: take the Vue tab's template, drop it into the Nuxt tab, and it works without changes. Nuxt is "Vue with batteries" — the batteries (auto-import, file-based routing, SSR) don't change the component's body, just the surrounding scaffolding.
 </Note>
 
-<Note id="fetch" kind="gotcha" tip="useFetch with a typed generic — narrows the data shape so the chart's prop types are enforced" remember="useFetch<{ counts: ...; shots: ... }>('/api/run-circuit') → data.counts is typed end-to-end.">
-The TypeScript generic on `useFetch` flows the API response shape through to the template. When you write `<ProbabilityChart :counts="data.counts" :shots="data.shots" />`, TypeScript checks that `data.counts` matches the `Counts` type the component expects. End-to-end type safety with zero ceremony — the kind of polish that makes a designer feel safe shipping fast.
+<Note id="fetch" kind="gotcha" tip="useFetch with a typed generic — narrows the data shape so the chart's prop types are enforced" remember="useFetch<{ counts: ...; samples: ... }>('/api/distribution') → data.counts is typed end-to-end.">
+The TypeScript generic on `useFetch` flows the API response shape through to the template. When you write `<DistributionChart :counts="data.counts" :samples="data.samples" />`, TypeScript checks that `data.counts` matches the `Counts` type the component expects. End-to-end type safety with zero ceremony — the kind of polish that makes a designer feel safe shipping fast.
 </Note>
 
 </LangTab>

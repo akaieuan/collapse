@@ -11,6 +11,7 @@ import { SkillRowActions } from "@/components/skills/skill-row-actions";
 export const dynamic = "force-dynamic";
 
 const SKILLS_ROOT = path.join(os.homedir(), ".claude", "skills");
+const SERVERS_ROOT = path.join(os.homedir(), ".claude", "mcp-servers");
 
 type SkillEntry = {
   name: string;
@@ -21,6 +22,44 @@ type SkillEntry = {
   verdict: QualityVerdict;
   warnCount: number;
 };
+
+type McpServerEntry = {
+  name: string;
+  description: string;
+  modified: number;
+  dir: string;
+};
+
+async function loadMcpServers(): Promise<McpServerEntry[]> {
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(SERVERS_ROOT);
+  } catch {
+    return [];
+  }
+  const out: McpServerEntry[] = [];
+  for (const entry of entries) {
+    if (entry.startsWith(".")) continue;
+    const pkgFile = path.join(SERVERS_ROOT, entry, "package.json");
+    try {
+      const stat = await fs.stat(pkgFile);
+      const data = JSON.parse(await fs.readFile(pkgFile, "utf8")) as {
+        name?: unknown;
+        description?: unknown;
+      };
+      out.push({
+        name: typeof data.name === "string" ? data.name : entry,
+        description: typeof data.description === "string" ? data.description : "",
+        modified: stat.mtimeMs,
+        dir: entry,
+      });
+    } catch {
+      // skip non-server entries
+    }
+  }
+  out.sort((a, b) => b.modified - a.modified);
+  return out;
+}
 
 async function loadSkills(): Promise<SkillEntry[]> {
   let entries: string[] = [];
@@ -66,7 +105,7 @@ function formatRelative(ms: number): string {
 }
 
 export default async function SkillsPage() {
-  const skills = await loadSkills();
+  const [skills, servers] = await Promise.all([loadSkills(), loadMcpServers()]);
   const warnTotal = skills.filter((s) => s.verdict === "warn").length;
   const infoTotal = skills.filter((s) => s.verdict === "info").length;
   const cleanTotal = skills.filter((s) => s.verdict === "clean").length;
@@ -95,6 +134,10 @@ export default async function SkillsPage() {
             <QualityDot verdict="warn" />
             <span>{warnTotal}</span>
             <span className="text-muted-foreground/55">warn</span>
+          </span>
+          <span aria-hidden className="text-muted-foreground/40">·</span>
+          <span className="tabular-nums">
+            <span className="text-foreground/85">{servers.length}</span> mcp
           </span>
           <code className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/90">
             ~/.claude/skills/
@@ -153,6 +196,46 @@ export default async function SkillsPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {servers.length > 0 && (
+          <section className="mt-10">
+            <div className="mb-3 flex items-baseline justify-between border-b border-border/60 pb-2">
+              <h2 className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-foreground/75">
+                MCP servers
+              </h2>
+              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/90">
+                ~/.claude/mcp-servers/
+              </code>
+            </div>
+            <ul className="divide-y divide-border/40 overflow-hidden rounded-2xl border border-border/40 bg-card/40">
+              {servers.map((srv) => (
+                <li key={srv.dir} className="px-4 py-3 transition-colors duration-150 hover:bg-muted/30">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-1.5 shrink-0 rounded bg-[var(--brand)]/12 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-[var(--brand)]">
+                      tool
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-mono text-[12.5px] font-medium tracking-tight text-foreground">
+                        {srv.name}
+                      </h3>
+                      {srv.description && (
+                        <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-muted-foreground">
+                          {srv.description}
+                        </p>
+                      )}
+                      <p className="mt-1 font-mono text-[10.5px] text-muted-foreground/70">
+                        ~/.claude/mcp-servers/{srv.dir}/
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right font-mono text-[10.5px] text-muted-foreground">
+                      <div>{formatRelative(srv.modified)}</div>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </div>
     </div>

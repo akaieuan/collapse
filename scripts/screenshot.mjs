@@ -22,25 +22,25 @@ const TEST_NOTEBOOK = JSON.stringify({
     {
       cell_type: "markdown",
       source:
-        "# Bell pair preparation\n\nA Bell pair is the simplest entangled state — the foundational building block of every quantum communication protocol.\n\n:::{important} Entanglement is the channel\nWithout the Bell pair there is no way to transmit information from Alice to Bob using just two classical bits. The entanglement is the *resource* that makes teleportation work.\n:::",
+        "# useDebouncedValue hook\n\nA tiny React hook that delays a fast-changing value until it stops changing.\n\n:::{important} Cleanup is the whole trick\nThe returned cleanup clears the pending timer before the next run, so only the latest value ever lands.\n:::",
     },
     {
       cell_type: "code",
       source:
-        "from qiskit import QuantumCircuit\n\nqc = QuantumCircuit(2, 2)\nqc.h(0)        # put qubit 0 in superposition\nqc.cx(0, 1)    # entangle qubit 1 with qubit 0\nqc.measure([0, 1], [0, 1])",
+        'import { useEffect, useState } from "react";\n\nexport function useDebouncedValue(value, delay) {\n  const [d, setD] = useState(value);\n  useEffect(() => {\n    const id = setTimeout(() => setD(value), delay);\n    return () => clearTimeout(id);\n  }, [value, delay]);\n  return d;\n}',
     },
     {
       cell_type: "markdown",
       source:
-        ":::{tip}\nIn the noiseless limit, measurement outcomes are perfectly correlated — both 00 or both 11, never mixed.\n:::",
+        ":::{tip}\nDebounce the value, not the handler — keep the input controlled and derive a debounced copy.\n:::",
     },
     {
       cell_type: "code",
       source:
-        "from qiskit_aer import AerSimulator\nsim = AerSimulator()\njob = sim.run(qc, shots=4096)\ncounts = job.result().get_counts()",
+        'function SearchBox() {\n  const [q, setQ] = useState("");\n  const debounced = useDebouncedValue(q, 300);\n  useEffect(() => { if (debounced) void fetch(`/api/search?q=${debounced}`); }, [debounced]);\n  return <input value={q} onChange={(e) => setQ(e.target.value)} />;\n}',
     },
   ],
-  metadata: { kernelspec: { language: "python", name: "python3" } },
+  metadata: { kernelspec: { language: "typescript", name: "tslab" } },
   nbformat: 4,
   nbformat_minor: 5,
 });
@@ -56,7 +56,7 @@ const ctx = await browser.newContext({
 // Pre-warm dev routes — first request to a Next dev route triggers compile (~5–15s).
 // Walking each route once means the screenshot pass hits warm caches.
 console.log("Pre-warming routes…");
-for (const path of ["/", "/concepts/quantum-audio-encoding/grid", "/concepts/reactivity/grid", "/concepts/quantum-audio-encoding", "/import", "/skills"]) {
+for (const path of ["/", "/concepts/side-effects/grid", "/concepts/reactivity/grid", "/concepts/side-effects", "/import", "/skills"]) {
   const page = await ctx.newPage();
   try {
     await page.goto(BASE + path, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -80,14 +80,14 @@ async function snap(name, path, prep) {
 // 01 — homepage / concepts index
 await snap("01-home", "/");
 
-// 02 — cross-stack lesson grid view (Qiskit-primary, shows the quantum/JS bridge)
-await snap("02-lesson-grid", "/concepts/quantum-audio-encoding/grid");
+// 02 — cross-stack lesson grid view (a side-effectful pattern across stacks)
+await snap("02-lesson-grid", "/concepts/side-effects/grid");
 
 // 06 — Vue-primary cross-stack lesson (the "I'm building a Vue/Nuxt skill" beat)
 await snap("06-lesson-grid-vue", "/concepts/reactivity/grid");
 
 // 03 — lesson page (tabs view) showing the annotation system
-await snap("03-lesson", "/concepts/quantum-audio-encoding", async (page) => {
+await snap("03-lesson", "/concepts/side-effects", async (page) => {
   // Click an annotated span to pin its note (color-coded reveal)
   const annot = page.locator(".annot").first();
   if (await annot.count()) {
@@ -103,7 +103,7 @@ await snap("04-import", "/import", async (page) => {
   await page.getByRole("button", { name: "Parse" }).click();
   await page.waitForTimeout(500);
   const codeCell = page.locator("button", {
-    hasText: "from qiskit import QuantumCircuit",
+    hasText: "useDebouncedValue",
   }).first();
   await codeCell.click();
   await page.waitForTimeout(800); // let prefill toast appear

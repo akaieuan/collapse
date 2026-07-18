@@ -14,7 +14,7 @@ What this would look like:
 
 What's blocking: **nothing structural.** The ingestor layer doesn't change. The persistence layer is a duplicate of `/api/skills/route.ts` pointing at a different directory. The work is the template engine — designing the right MCP tool surface for what's currently a "code pattern + annotations" shape.
 
-What's holding it back: **honest demand.** MCP tools are most valuable when they encapsulate *side effects* (call an API, hit a database, run a CLI). The patterns Collapse captures today are mostly pure code patterns. The first MCP target should be a category of skill where that distinction is real — e.g. "run this Qiskit circuit on AerSimulator", "fetch from this Vue composable", "scaffold a Next route".
+What's holding it back: **honest demand.** MCP tools are most valuable when they encapsulate *side effects* (call an API, hit a database, run a CLI). The patterns Collapse captures today are mostly pure code patterns. The first MCP target should be a category of skill where that distinction is real — e.g. "run this shell task", "fetch from this Vue composable", "scaffold a Next route".
 
 Tentatively scheduled for v0.2.
 
@@ -28,7 +28,7 @@ The work is mostly UI: a "select multiple cells" mode in `/import` plus an aggre
 
 ### MyST chapter URL fetcher
 
-Today: paste/upload only. Pointing the import flow at a public Jupyter Book chapter URL (Qiskit textbook, Executable Books, etc.) and parsing it inline would close one more click. A small fetch + sanitization layer.
+Today: paste/upload only. Pointing the import flow at a public Jupyter Book chapter URL (Executable Books, MDX docs, etc.) and parsing it inline would close one more click. A small fetch + sanitization layer.
 
 ### Skill sharing / sync
 

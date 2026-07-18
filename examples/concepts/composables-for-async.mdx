@@ -12,7 +12,7 @@ primary: vue
 
 ## The mental shift
 
-Plain `async function fetch...` works for one-shot calls. The moment you have user-driven inputs (typing, dragging, picking a scheme) you need: cancellation of stale runs, optional debounce, and a way to express "we have a partial result" (think encoding progress over multiple shots). Composables (Vue) and custom hooks (React) are how you package those concerns once and reuse them everywhere.
+Plain `async function fetch...` works for one-shot calls. The moment you have user-driven inputs (typing, dragging, picking an option) you need: cancellation of stale runs, optional debounce, and a way to express "we have a partial result" (think upload progress across multiple chunks). Composables (Vue) and custom hooks (React) are how you package those concerns once and reuse them everywhere.
 
 <LangTab lang="vue">
 
@@ -63,7 +63,7 @@ export function useAsyncTask<T, A extends unknown[]>(
 ```
 
 <Note id="composable" tip="One composable, many fetchers — task is injected">
-By taking `task` as a parameter, this becomes a generic primitive. Use it for encode, decode, transpile, anything async. The `signal` lets the caller's task short-circuit on cancel — useful for fetch (`fetch(url, { signal })`).
+By taking `task` as a parameter, this becomes a generic primitive. Use it for upload, search, export, anything async. The `signal` lets the caller's task short-circuit on cancel — useful for fetch (`fetch(url, { signal })`).
 </Note>
 
 </LangTab>

@@ -11,6 +11,7 @@ import {
 } from "@/lib/notebook/to-annotation-input";
 import {
   generateAnnotationSkillDraft,
+  type AnnotationSkillInput,
   type SkillDraft,
 } from "@/lib/skill-template";
 import type {
@@ -82,10 +83,12 @@ function detectSourceType(raw: string): SourceType {
 
 function defaultLangForNotebook(lang: string): LangKey {
   const l = lang.toLowerCase();
-  if (l.includes("python") || l === "py") return "qiskit";
-  if (l === "typescript" || l === "tsx" || l === "ts") return "next";
-  return "qiskit";
+  if (l === "vue") return "vue";
+  // General default: imported notebooks are web/tooling patterns.
+  return "next";
 }
+
+type CollapseTarget = "skill" | "mcp";
 
 export function ImportFlow() {
   const [raw, setRaw] = useState("");
@@ -95,9 +98,11 @@ export function ImportFlow() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [notebookSlug, setNotebookSlug] = useState("");
   const [notebookTitle, setNotebookTitle] = useState("");
-  const [lang, setLang] = useState<LangKey>("qiskit");
+  const [lang, setLang] = useState<LangKey>("next");
   const [annotation, setAnnotation] = useState<AnnotationDraft>(EMPTY_ANNOTATION);
   const [draft, setDraft] = useState<SkillDraft | null>(null);
+  const [skillInput, setSkillInput] = useState<AnnotationSkillInput | null>(null);
+  const [target, setTarget] = useState<CollapseTarget>("skill");
   const [submitting, setSubmitting] = useState(false);
   const [collision, setCollision] = useState<{ existingDescription?: string } | null>(null);
 
@@ -113,9 +118,10 @@ export function ImportFlow() {
     setSelectedIdx(null);
     setNotebookSlug("");
     setNotebookTitle("");
-    setLang("qiskit");
+    setLang("next");
     setAnnotation(EMPTY_ANNOTATION);
     setDraft(null);
+    setSkillInput(null);
     setCollision(null);
   }
 
@@ -129,9 +135,9 @@ export function ImportFlow() {
       .catch(() => toast.error("Failed to read file"));
   }
 
-  async function loadSample() {
+  async function loadSample(name: string) {
     try {
-      const res = await fetch("/api/examples/notebook");
+      const res = await fetch(`/api/examples/notebook?name=${encodeURIComponent(name)}`);
       if (!res.ok) {
         toast.error("Failed to load sample notebook");
         return;
@@ -237,6 +243,7 @@ export function ImportFlow() {
     });
     const generated = generateAnnotationSkillDraft(input);
     setDraft(generated);
+    setSkillInput(input);
     setCollision(null);
   }
 
@@ -244,18 +251,29 @@ export function ImportFlow() {
     if (!draft) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/skills", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...draft, overwrite }),
-      });
+      const res =
+        target === "mcp"
+          ? await fetch("/api/mcp-servers", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(
+                skillInput
+                  ? { name: draft.name, input: skillInput, description: draft.description, overwrite }
+                  : { name: draft.name, overwrite },
+              ),
+            })
+          : await fetch("/api/skills", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...draft, overwrite }),
+            });
       const data = await res.json();
       if (res.status === 409) {
         setCollision({ existingDescription: data?.existing?.description });
         return;
       }
       if (!res.ok) {
-        toast.error(data?.error ?? "Failed to write skill");
+        toast.error(data?.error ?? (target === "mcp" ? "Failed to write MCP server" : "Failed to write skill"));
         return;
       }
       toast.success(`Collapsed → ${data.path}`);
@@ -265,7 +283,12 @@ export function ImportFlow() {
     }
   }
 
-  const skillPath = draft ? `~/.claude/skills/${draft.name}/SKILL.md` : "";
+  const skillPath =
+    draft
+      ? target === "mcp"
+        ? `~/.claude/mcp-servers/${draft.name}/`
+        : `~/.claude/skills/${draft.name}/SKILL.md`
+      : "";
   const draftPreview = useMemo(() => {
     if (!draft) return "";
     return `---\nname: ${draft.name}\ndescription: ${draft.description.replace(/\s+/g, " ").trim()}\n---\n\n${draft.body.trimEnd()}\n`;
@@ -300,8 +323,8 @@ export function ImportFlow() {
               onChange={(e) => setRaw(e.target.value)}
               placeholder={
                 sourceType === "ipynb"
-                  ? '{"cells": [{"cell_type": "code", "source": "qc = QuantumCircuit(3, 3)\\n", ...}], ...}'
-                  : "# Quantum teleportation\n\n```{code-cell} python\nqc = QuantumCircuit(3, 3)\n```"
+                  ? '{"cells": [{"cell_type": "code", "source": "export function useDebouncedValue(value, delay) {\\n  ...\\n}", ...}], ...}'
+                  : "# useDebouncedValue\n\n```{code-cell} tsx\nexport function useDebouncedValue(value, delay) { /* ... */ }\n```"
               }
               rows={10}
               className="field-sizing-fixed resize-none font-mono text-[12px] leading-relaxed"
@@ -324,7 +347,7 @@ export function ImportFlow() {
                 </label>
                 <button
                   type="button"
-                  onClick={loadSample}
+                  onClick={() => loadSample("use-debounced-value")}
                   className="rounded-md border border-border/60 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
                 >
                   Try sample
@@ -368,14 +391,14 @@ export function ImportFlow() {
                   label="Notebook slug"
                   value={notebookSlug}
                   onChange={setNotebookSlug}
-                  placeholder="quantum-teleportation"
+                  placeholder="use-debounced-value"
                   width="w-48"
                 />
                 <FieldInline
                   label="Notebook title"
                   value={notebookTitle}
                   onChange={setNotebookTitle}
-                  placeholder="Quantum teleportation"
+                  placeholder="useDebouncedValue hook"
                   width="w-60"
                 />
               </div>
@@ -414,7 +437,7 @@ export function ImportFlow() {
                         width="w-48"
                         value={annotation.id}
                         onChange={(v) => setAnnotation({ ...annotation, id: v })}
-                        placeholder="encode-step"
+                        placeholder="cleanup-effect"
                       />
                       <LangChoice value={lang} onChange={setLang} />
                     </div>
@@ -428,13 +451,13 @@ export function ImportFlow() {
                       label="Tip (one-line)"
                       value={annotation.tip}
                       onChange={(v) => setAnnotation({ ...annotation, tip: v })}
-                      placeholder="encode() returns a fresh QuantumCircuit each call"
+                      placeholder="clearTimeout(id) cancels the pending update"
                     />
                     <FieldStack
                       label="Remember (mnemonic, optional)"
                       value={annotation.remember}
                       onChange={(v) => setAnnotation({ ...annotation, remember: v })}
-                      placeholder="Encode is pure: in → audio, out → circuit"
+                      placeholder="Clear the timer on every change"
                     />
                     <FieldStack
                       label="Body"
@@ -472,14 +495,24 @@ export function ImportFlow() {
       {draft ? (
         <motion.div {...STAGE_MOTION}>
           <Card className="gap-0 overflow-hidden rounded-2xl border-border/40 bg-card/40 p-0">
-            <div className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
               <div className="space-y-0.5">
                 <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                  3 · Collapse to skill
+                  3 · {target === "mcp" ? "Collapse to MCP tool" : "Collapse to skill"}
                 </p>
                 <p className="font-mono text-[11px] text-muted-foreground">{skillPath}</p>
               </div>
-              <Badge variant="secondary" className="font-mono text-[11px]">/{draft.name}</Badge>
+              <div className="flex items-center gap-3">
+                <SegmentedToggle
+                  value={target}
+                  onChange={setTarget}
+                  options={[
+                    { value: "skill", label: "skill" },
+                    { value: "mcp", label: "MCP tool" },
+                  ]}
+                />
+                <Badge variant="secondary" className="font-mono text-[11px]">/{draft.name}</Badge>
+              </div>
             </div>
 
             <div className="grid gap-4 px-5 py-4">
@@ -530,7 +563,7 @@ export function ImportFlow() {
               {collision ? (
                 <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">
                   <p className="font-medium">
-                    A skill named &quot;{draft.name}&quot; already exists.
+                    A {target === "mcp" ? "MCP server" : "skill"} named &quot;{draft.name}&quot; already exists.
                   </p>
                   {collision.existingDescription ? (
                     <p className="mt-1 text-xs text-muted-foreground">

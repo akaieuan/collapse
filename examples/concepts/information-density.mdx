@@ -12,7 +12,7 @@ primary: next
 
 ## The mental shift
 
-A research surface is **not** a landing page. The user is scanning thirty rows of measurement counts, comparing scheme variants, checking circuit depths against shot counts. The visual primitives that work for a marketing page (generous line-height, sans-serif body, large headings) actively hurt this user — they have to do more eye-saccades, and every saccade is a chance to lose place.
+A research surface is **not** a landing page. The user is scanning thirty rows of metrics, comparing variants side by side, checking p95 latency against request counts. The visual primitives that work for a marketing page (generous line-height, sans-serif body, large headings) actively hurt this user — they have to do more eye-saccades, and every saccade is a chance to lose place.
 
 The patterns that earn density:
 
@@ -27,22 +27,22 @@ The cross-stack invariance: these are CSS decisions, not framework decisions. Ev
 
 <LangTab lang="next">
 
-```tsx {1-3#row 5-25#header 27-50#table 52-60#caption} title="components/MeasurementTable.tsx"
-type Row = { bitstring: string; count: number; pct: number };
-type Props = { rows: Row[]; shots: number };
+```tsx {1-3#row 5-25#header 27-50#table 52-60#caption} title="components/MetricsTable.tsx"
+type Row = { key: string; count: number; pct: number };
+type Props = { rows: Row[]; samples: number };
 
-export function MeasurementTable({ rows, shots }: Props) {
+export function MetricsTable({ rows, samples }: Props) {
   return (
     <section className="overflow-hidden rounded-md border border-border bg-card">
       <header className="flex items-baseline justify-between gap-4 border-b border-border/70 px-3 py-2 font-mono text-[10.5px] text-muted-foreground">
-        <span className="uppercase tracking-[0.14em] text-foreground/80">measurement</span>
+        <span className="uppercase tracking-[0.14em] text-foreground/80">metrics</span>
         <span aria-hidden className="text-muted-foreground/40">·</span>
         <span className="tabular-nums">
-          <span className="text-foreground/85">{rows.length}</span> outcomes
+          <span className="text-foreground/85">{rows.length}</span> rows
         </span>
         <span aria-hidden className="text-muted-foreground/40">·</span>
         <span className="tabular-nums">
-          <span className="text-foreground/85">{shots.toLocaleString()}</span> shots
+          <span className="text-foreground/85">{samples.toLocaleString()}</span> samples
         </span>
         <code className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/90">
           {Math.max(...rows.map((r) => r.pct)).toFixed(1)}% max
@@ -52,15 +52,15 @@ export function MeasurementTable({ rows, shots }: Props) {
       <table className="w-full font-mono text-[12px] tabular-nums">
         <thead>
           <tr className="border-b border-border/40 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-            <th className="px-3 py-1.5 text-left font-normal">bitstring</th>
+            <th className="px-3 py-1.5 text-left font-normal">key</th>
             <th className="px-3 py-1.5 text-right font-normal">count</th>
             <th className="px-3 py-1.5 text-right font-normal">%</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={r.bitstring} className={i % 2 === 0 ? "" : "bg-muted/20"}>
-              <td className="px-3 py-1 leading-tight">{r.bitstring}</td>
+            <tr key={r.key} className={i % 2 === 0 ? "" : "bg-muted/20"}>
+              <td className="px-3 py-1 leading-tight">{r.key}</td>
               <td className="px-3 py-1 text-right leading-tight text-foreground/90">{r.count}</td>
               <td className="px-3 py-1 text-right leading-tight text-muted-foreground">
                 {r.pct.toFixed(2)}
@@ -71,7 +71,7 @@ export function MeasurementTable({ rows, shots }: Props) {
       </table>
 
       <footer className="border-t border-border/60 bg-muted/20 px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
-        Σ {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} · ratio {((rows.reduce((s, r) => s + r.count, 0) / shots) * 100).toFixed(1)}%
+        Σ {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} · ratio {((rows.reduce((s, r) => s + r.count, 0) / samples) * 100).toFixed(1)}%
       </footer>
     </section>
   );
@@ -82,7 +82,7 @@ export function MeasurementTable({ rows, shots }: Props) {
 Set monospace and tabular-nums once on the `<table>` element; every cell inherits. This eliminates the most common bug in research tables: digits that jitter horizontally because some are wide (8) and some are narrow (1). With tabular-nums, all digits occupy identical horizontal space. Numbers under each other look stacked.
 </Note>
 
-<Note id="header" kind="mnemonic" tip="The status strip — uppercase + tracked + dot-separators is the canonical research-tool header" remember="`text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground` + `·` separators. The Linear/Vercel/Moth dashboard look.">
+<Note id="header" kind="mnemonic" tip="The status strip — uppercase + tracked + dot-separators is the canonical research-tool header" remember="`text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground` + `·` separators. The Linear/Vercel/Notion dashboard look.">
 This compact strip pattern (small uppercase labels, dot separators, tabular numbers inline) is in every dense research tool: Linear, Vercel dashboards, Notion's databases. It packs four to six pieces of metadata into the height of a single line. The styling is consistent because the eye learns this shape fast — and once learned, every tool that uses it feels familiar.
 </Note>
 
@@ -98,10 +98,10 @@ The footer pattern: render the sum as part of the table's visual frame, not as a
 
 <LangTab lang="vue">
 
-```vue {1-8#props 10-23#table 25-45#styles} title="components/MeasurementTable.vue"
+```vue {1-8#props 10-23#table 25-45#styles} title="components/MetricsTable.vue"
 <script setup lang="ts">
-type Row = { bitstring: string; count: number; pct: number }
-defineProps<{ rows: Row[]; shots: number }>()
+type Row = { key: string; count: number; pct: number }
+defineProps<{ rows: Row[]; samples: number }>()
 
 import { computed } from 'vue'
 const total = computed(() => rows.reduce((s: number, r: Row) => s + r.count, 0))
@@ -110,29 +110,29 @@ const total = computed(() => rows.reduce((s: number, r: Row) => s + r.count, 0))
 <template>
   <section class="block">
     <header class="bar">
-      <span class="label">measurement</span>
+      <span class="label">metrics</span>
       <span class="sep">·</span>
-      <span class="num"><strong>{{ rows.length }}</strong> outcomes</span>
+      <span class="num"><strong>{{ rows.length }}</strong> rows</span>
       <span class="sep">·</span>
-      <span class="num"><strong>{{ shots.toLocaleString() }}</strong> shots</span>
+      <span class="num"><strong>{{ samples.toLocaleString() }}</strong> samples</span>
     </header>
     <table>
       <thead>
         <tr>
-          <th>bitstring</th>
+          <th>key</th>
           <th class="num">count</th>
           <th class="num">%</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(r, i) in rows" :key="r.bitstring" :class="i % 2 === 0 ? '' : 'stripe'">
-          <td>{{ r.bitstring }}</td>
+        <tr v-for="(r, i) in rows" :key="r.key" :class="i % 2 === 0 ? '' : 'stripe'">
+          <td>{{ r.key }}</td>
           <td class="num">{{ r.count }}</td>
           <td class="num muted">{{ r.pct.toFixed(2) }}</td>
         </tr>
       </tbody>
     </table>
-    <footer class="bar">Σ {{ total }} · {{ ((total / shots) * 100).toFixed(1) }}%</footer>
+    <footer class="bar">Σ {{ total }} · {{ ((total / samples) * 100).toFixed(1) }}%</footer>
   </section>
 </template>
 
@@ -153,8 +153,8 @@ td { padding: 0.25rem 0.75rem; line-height: 1.25; }
 </style>
 ```
 
-<Note id="props" kind="cross" tip="Same Row + Props type as Next — proves the data shape is portable" remember="`type Row = { bitstring: string; count: number; pct: number }` — identical across stacks. The component contract is the same.">
-The Vue component takes the exact same input shape as the React component. This is what cross-stack means in practice: the data interface (`{ rows: Row[]; shots: number }`) is portable, and the rendering details are framework-idiomatic. A backend that produces this shape can feed either component without translation.
+<Note id="props" kind="cross" tip="Same Row + Props type as Next — proves the data shape is portable" remember="`type Row = { key: string; count: number; pct: number }` — identical across stacks. The component contract is the same.">
+The Vue component takes the exact same input shape as the React component. This is what cross-stack means in practice: the data interface (`{ rows: Row[]; samples: number }`) is portable, and the rendering details are framework-idiomatic. A backend that produces this shape can feed either component without translation.
 </Note>
 
 <Note id="table" kind="core" tip="Same table structure — header / table / footer — just expressed in Vue's templating syntax" remember="Three sections: bar (header) / table (body) / bar (footer). Identical to Next tab. Vue template syntax just sugars the same JSX shape.">
@@ -169,35 +169,35 @@ Tailwind's `/60` suffix syntax (`border-border/60`) doesn't exist outside Tailwi
 
 <LangTab lang="nuxt">
 
-```vue {1-5#imports 7-26#template 28-44#styles} title="components/MeasurementTable.vue"
+```vue {1-5#imports 7-26#template 28-44#styles} title="components/MetricsTable.vue"
 <script setup lang="ts">
-type Row = { bitstring: string; count: number; pct: number }
-const props = defineProps<{ rows: Row[]; shots: number }>()
+type Row = { key: string; count: number; pct: number }
+const props = defineProps<{ rows: Row[]; samples: number }>()
 const total = computed(() => props.rows.reduce((s, r) => s + r.count, 0))
 </script>
 
 <template>
   <section class="block">
     <header class="bar">
-      <span class="label">measurement</span>
+      <span class="label">metrics</span>
       <span class="sep">·</span>
-      <span class="num"><strong>{{ rows.length }}</strong> outcomes</span>
+      <span class="num"><strong>{{ rows.length }}</strong> rows</span>
       <span class="sep">·</span>
-      <span class="num"><strong>{{ shots.toLocaleString() }}</strong> shots</span>
+      <span class="num"><strong>{{ samples.toLocaleString() }}</strong> samples</span>
     </header>
     <table>
       <thead>
-        <tr><th>bitstring</th><th class="num">count</th><th class="num">%</th></tr>
+        <tr><th>key</th><th class="num">count</th><th class="num">%</th></tr>
       </thead>
       <tbody>
-        <tr v-for="(r, i) in rows" :key="r.bitstring" :class="i % 2 === 0 ? '' : 'stripe'">
-          <td>{{ r.bitstring }}</td>
+        <tr v-for="(r, i) in rows" :key="r.key" :class="i % 2 === 0 ? '' : 'stripe'">
+          <td>{{ r.key }}</td>
           <td class="num">{{ r.count }}</td>
           <td class="num muted">{{ r.pct.toFixed(2) }}</td>
         </tr>
       </tbody>
     </table>
-    <footer class="bar">Σ {{ total }} · {{ ((total / shots) * 100).toFixed(1) }}%</footer>
+    <footer class="bar">Σ {{ total }} · {{ ((total / samples) * 100).toFixed(1) }}%</footer>
   </section>
 </template>
 

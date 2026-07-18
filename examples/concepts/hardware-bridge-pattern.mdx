@@ -1,20 +1,18 @@
 ---
 slug: hardware-bridge-pattern
 title: Hardware bridge over public URL
-summary: A three-tier pattern for putting lab hardware behind a cloud app — local Flask server, ngrok tunnel, cloud proxy with graceful timeout. Works for quantum rigs, lab equipment, anything on-prem.
-category: Quantum ops
+summary: A three-tier pattern for putting lab hardware behind a cloud app — local Flask server, ngrok tunnel, cloud proxy with graceful timeout. Works for lab equipment, on-prem services, anything behind a firewall.
+category: Cross-stack patterns
 languages:
-  - qiskit
   - next
   - vue
   - nuxt
-primary: qiskit
-qiskitNote: "Pattern extracted from moth-quantum/deutschetelekom-simul — Q1 Synth's polarizer rig and other on-prem hardware demos use this exact three-tier layout."
+primary: next
 ---
 
 ## The mental shift
 
-Your quantum hardware (or any lab equipment) lives on a specific machine that can't be moved to the cloud. But you want users to interact with it from a web UI. The naive answer is "deploy the controller to the cloud" — impossible if it talks to physical USB/serial/proprietary drivers. The Moth answer is a three-tier sandwich:
+Your lab hardware (a bench instrument, a serial device, any on-prem service) lives on a specific machine that can't be moved to the cloud. But you want users to interact with it from a web UI. The naive answer is "deploy the controller to the cloud" — impossible if it talks to physical USB/serial/proprietary drivers. The clean answer is a three-tier sandwich:
 
 1. **Bridge** — a Flask server running on the lab machine, owning the hardware drivers. Exposes `POST /api/hardware/execute` and `GET /api/status`.
 2. **Tunnel** — ngrok (or Tailscale, Cloudflare Tunnel) gives the bridge a public HTTPS URL.
@@ -22,66 +20,9 @@ Your quantum hardware (or any lab equipment) lives on a specific machine that ca
 
 The wins: lab hardware stays behind its firewall. The cloud app is publicly addressable. If the lab machine sleeps or the tunnel drops, the cloud app degrades gracefully instead of 500ing.
 
-<LangTab lang="qiskit">
-
-```python {1-6#imports 8-16#endpoints 18-29#execute 31-37#run} title="bridge.py — runs on the lab machine"
-from flask import Flask, request, jsonify
-import os
-import time
-from device_controller import control_real_hardware, get_status
-
-app = Flask(__name__)
-START_TIME = time.time()
-
-@app.get("/api/status")
-def status():
-    return jsonify({
-        "ok": True,
-        "uptime_seconds": int(time.time() - START_TIME),
-        "hardware_ready": get_status().get("ready", False),
-        "version": "bridge/0.1.0",
-    })
-
-@app.post("/api/hardware/execute")
-def execute():
-    payload = request.get_json(silent=True) or {}
-    try:
-        result = control_real_hardware(payload.get("circuit"), shots=payload.get("shots", 4096))
-        return jsonify({"ok": True, "result": result})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.get("/api/healthz")
-def healthz():
-    return "ok", 200
-
-if __name__ == "__main__":
-    # Pair this with: ngrok http 5000 (or `tailscale serve`, or Cloudflare Tunnel)
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-```
-
-<Note id="imports" kind="core" tip="The bridge owns the hardware imports — the cloud server never imports them" remember="device_controller (and any vendor SDK) lives ONLY on the bridge. Cloud has no idea what physical thing it's talking to.">
-This is the firewall: vendor SDKs (`pythonnet`, ThorLabs CLR, NI-DAQ, qiskit_ibm_runtime with API keys) only need to exist on the lab machine. The cloud server speaks JSON over HTTPS — completely agnostic about what's on the other side. Trying to install vendor drivers on Heroku is a losing battle; this pattern avoids it entirely.
-</Note>
-
-<Note id="endpoints" kind="mnemonic" tip="Three endpoints, always — status, execute, healthz" remember="GET /api/status (richly informative) + POST /api/hardware/execute (the work) + GET /api/healthz (k8s-style liveness).">
-**Status** is for the UI: "is the rig up?" with structured fields the frontend can render. **Execute** is the actual work endpoint. **Healthz** is a single-byte "ok" for tunnel/uptime monitors (UptimeRobot, Better Stack) that just want a 200. Don't conflate them.
-</Note>
-
-<Note id="execute" kind="mistake" tip="Wrap the call in try/except — never let hardware exceptions kill the Flask process" remember="One bad circuit shouldn't kill the bridge. try/except → 500 with `error` field. Flask stays up.">
-A common bug: vendor SDK raises some obscure CLR exception, Flask doesn't catch it, the process dies, ngrok disconnects, the cloud app starts 502ing. The fix: catch broadly, return 500 with a structured error payload, log the trace locally. The bridge process survives.
-</Note>
-
-<Note id="run" kind="gotcha" tip="host='0.0.0.0' is REQUIRED — localhost binding won't be reachable through the tunnel" remember="ngrok forwards to whatever the bridge binds to. localhost (127.0.0.1) is local-only. 0.0.0.0 listens on all interfaces.">
-A first-day-of-deployment classic: dev binds to `127.0.0.1`, ngrok forwards traffic but the bridge ignores it because the source IP isn't loopback. Always bind to `0.0.0.0` for tunneled services. (Yes, this means firewall rules matter — the lab machine should still firewall the port off the local network.)
-</Note>
-
-</LangTab>
-
 <LangTab lang="next">
 
-```ts {1-6#imports 8-13#config 15-31#proxy 33-45#handler} title="app/api/run-circuit/route.ts"
+```ts {1-6#imports 8-13#config 15-31#proxy 33-45#handler} title="app/api/run-job/route.ts"
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -93,8 +34,8 @@ const BridgeURL = process.env.BRIDGE_URL; // e.g. https://abc123.ngrok-free.app
 const BridgeTimeoutMs = 30_000;
 
 const RequestSchema = z.object({
-  circuit: z.unknown(),
-  shots: z.number().int().positive().max(100_000).default(4096),
+  job: z.unknown(),
+  count: z.number().int().positive().max(100_000).default(4096),
 });
 
 async function callBridge(body: unknown, signal: AbortSignal) {
@@ -184,16 +125,16 @@ async function pollStatus() {
   }
 }
 
-async function run(circuit: unknown, shots = 4096) {
+async function run(job: unknown, count = 4096) {
   pending.value = true
   error.value = null
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 30_000)
   try {
-    const res = await fetch('/api/run-circuit', {
+    const res = await fetch('/api/run-job', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ circuit, shots }),
+      body: JSON.stringify({ job, count }),
       signal: controller.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -216,9 +157,9 @@ onUnmounted(() => clearInterval(pollHandle))
     <div class="status-bar">
       <span :class="['dot', reachable ? 'dot-green' : 'dot-red']" />
       <span v-if="reachable">Rig reachable · uptime {{ status?.uptime_seconds }}s</span>
-      <span v-else>Bridge offline — degrade to simulator</span>
+      <span v-else>Bridge unreachable — degrade gracefully</span>
     </div>
-    <button @click="run(currentCircuit)" :disabled="pending || !reachable">
+    <button @click="run(currentJob)" :disabled="pending || !reachable">
       {{ pending ? 'Running…' : 'Run on hardware' }}
     </button>
     <pre v-if="error" class="error">{{ error }}</pre>
@@ -227,7 +168,7 @@ onUnmounted(() => clearInterval(pollHandle))
 </template>
 ```
 
-<Note id="composable" kind="cross" tip="Two pieces of state worth exposing — status (rich, slow-polled) and result (single-call)" remember="Poll /api/bridge-status every 15s. Call /api/run-circuit on-demand. Don't mix the two endpoints.">
+<Note id="composable" kind="cross" tip="Two pieces of state worth exposing — status (rich, slow-polled) and result (single-call)" remember="Poll /api/bridge-status every 15s. Call /api/run-job on-demand. Don't mix the two endpoints.">
 The Vue composable mirrors the bridge's two-endpoint design. Status is a slow, cheap GET that runs on an interval — perfect for the "is the rig up?" badge. Execute is an expensive POST that runs on user action only. Keep them separate so the badge can update even while a run is in flight.
 </Note>
 
@@ -273,7 +214,7 @@ export default defineEventHandler(async () => {
   }
 })
 
-// server/api/run-circuit.post.ts
+// server/api/run-job.post.ts
 export default defineEventHandler(async (event) => {
   const cfg = useRuntimeConfig()
   const body = await readBody(event)
@@ -303,9 +244,9 @@ const { data: status, refresh } = await useFetch('/api/bridge-status', {
   key: 'bridge-status',
   server: false, // client-only — bridge can be slow on first render
 })
-const { execute: run, pending, data: result, error } = useFetch('/api/run-circuit', {
+const { execute: run, pending, data: result, error } = useFetch('/api/run-job', {
   method: 'POST',
-  body: { circuit: getCircuit(), shots: 4096 },
+  body: { job: getJob(), count: 4096 },
   immediate: false,
 })
 

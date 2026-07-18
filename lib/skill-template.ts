@@ -56,7 +56,15 @@ function composeAnnotationDescription(input: AnnotationSkillInput & {
     .join(" ");
 }
 
-function annotationTriggerPhrases(input: AnnotationSkillInput): string[] {
+/**
+ * Compose the ≤5 quoted trigger phrases for an annotation-derived artifact,
+ * from the annotation's tip, remember, and `lang + annotationId`.
+ *
+ * Exported (additively) so the MCP template engine (`lib/mcp-template.ts`) can
+ * derive a tool's name/description from the SAME composition the skill template
+ * uses, rather than duplicating it. Behaviour is unchanged for skill drafts.
+ */
+export function annotationTriggerPhrases(input: AnnotationSkillInput): string[] {
   const phrases = new Set<string>();
   if (input.tip) {
     phrases.add(`"${truncatePhrase(input.tip)}"`);
@@ -68,7 +76,8 @@ function annotationTriggerPhrases(input: AnnotationSkillInput): string[] {
   return [...phrases].slice(0, 5);
 }
 
-function truncatePhrase(s: string): string {
+/** Truncate a candidate trigger phrase to 70 chars with an ellipsis. Exported for reuse. */
+export function truncatePhrase(s: string): string {
   const cleaned = s.replace(/[*`]/g, "").trim();
   return cleaned.length <= 70 ? cleaned : cleaned.slice(0, 67) + "…";
 }
@@ -127,7 +136,8 @@ function composeAnnotationBody(input: AnnotationSkillInput & {
   return parts.join("\n");
 }
 
-function slugifyName(s: string): string {
+/** Kebab-case a string into a filesystem-safe skill/server name (≤64 chars). Exported for reuse. */
+export function slugifyName(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
