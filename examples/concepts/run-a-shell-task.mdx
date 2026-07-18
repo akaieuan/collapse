@@ -1,0 +1,37 @@
+---
+slug: run-a-shell-task
+title: Run a shell task
+summary: Spawn a child process, stream its output, and resolve on exit — the canonical "run a CLI from code" side effect.
+category: Side effects & tooling
+languages:
+  - next
+primary: next
+---
+
+## The pattern behind every task runner
+
+Building, testing, deploying, transcoding — all of it is "run a command and react to how it exits". This is a textbook MCP tool: a side effect (spawn a process) wrapped in a typed request/response.
+
+<LangTab lang="next">
+
+```ts {5#spawn 6-7#lifecycle} title="lib/run-task.ts"
+import { spawn } from "node:child_process";
+
+export function runTask(cmd: string, args: string[]): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("close", (code) => resolve(code ?? 0));
+  });
+}
+```
+
+<Note id="spawn" kind="core" tip="spawn streams; exec buffers — prefer spawn for long tasks">
+`exec` buffers all output in memory and hands it back at the end — fine for a one-liner, dangerous for a build. `spawn` streams, so `stdio: "inherit"` pipes the child's output straight to your terminal in real time.
+</Note>
+
+<Note id="lifecycle" kind="gotcha" tip="Handle BOTH 'error' and 'close'">
+`error` fires when the command can't be launched (not found, no permission); `close` fires when it ran and exited. Miss `error` and a bad command hangs your promise forever. Resolve on the exit code so callers can branch on success.
+</Note>
+
+</LangTab>

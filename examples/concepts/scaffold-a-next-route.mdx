@@ -1,0 +1,67 @@
+---
+slug: scaffold-a-next-route
+title: Scaffold an API route
+summary: Create a server endpoint that reacts to a request — one file, one handler per HTTP verb, validated at the boundary.
+category: Side effects & tooling
+languages:
+  - next
+  - nuxt
+primary: next
+---
+
+## Why this is the first honest MCP target
+
+Route handlers *do* something: they read a request, touch a database or filesystem, and return a result. That side effect is exactly what an MCP tool encapsulates — which is why "scaffold a route" collapses cleanly to either a skill (the pattern) or an MCP tool (the invocable action).
+
+<LangTab lang="next">
+
+```tsx {6-10#verb-exports 8#validate 14#status} title="app/api/widgets/route.ts"
+import { NextResponse } from "next/server";
+import { z } from "zod";
+
+const Query = z.object({ id: z.string() });
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const { id } = Query.parse(Object.fromEntries(searchParams));
+  return NextResponse.json({ id });
+}
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  return NextResponse.json({ created: body }, { status: 201 });
+}
+```
+
+<Note id="verb-exports" kind="core" tip="One async function per HTTP verb, named for the verb">
+The App Router maps `route.ts` to a URL and dispatches by the exported function name — `GET`, `POST`, `PUT`, `DELETE`. No router config, no decorators. The filename is the route; the export is the verb.
+</Note>
+
+<Note id="validate" kind="gotcha" tip="Validate query and body at the boundary">
+Everything crossing the network is `unknown`. Parse it with Zod at the top of the handler so the rest of the function works with typed, trusted data — and malformed input fails loudly with a 400.
+</Note>
+
+<Note id="status" kind="note" tip="Return an explicit status for writes">
+A successful create is a `201`, not a `200`. Pass it as the second argument to `NextResponse.json`. Defaults are fine for reads; be explicit for anything that mutates.
+</Note>
+
+</LangTab>
+
+<LangTab lang="nuxt">
+
+```ts {1-4#event-handler 2#read-body} title="server/api/widgets.post.ts"
+export default defineEventHandler(async (event) => {
+  const body = await readBody(event)
+  return { created: body }
+})
+```
+
+<Note id="event-handler" kind="core" tip="The filename encodes the route AND the verb">
+Nitro's file-based routing reads `widgets.post.ts` as "POST /api/widgets". One handler per file, wrapped in `defineEventHandler`. The verb lives in the filename suffix, not in an export name.
+</Note>
+
+<Note id="read-body" kind="note" tip="readBody parses the request body for you">
+No manual `await req.json()` — `readBody(event)` handles content-type negotiation and returns the parsed payload. Its Next.js counterpart is `await req.json()`.
+</Note>
+
+</LangTab>
